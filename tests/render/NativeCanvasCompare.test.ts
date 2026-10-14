@@ -89,33 +89,38 @@ describe("NativeCanvasCompare", () => {
     cmp.destroy();
   });
 
-  it("selecting on the left dims the rest of the left and shows on the right where it would go back, with no lines across", async () => {
+  it("selecting on the left dims the rest of the past side and, on the current side, draws the past position with an arrow to now", async () => {
     made.length = 0;
     const { host, cmp } = await drawSimple();
     click(host, "left", 310, 10);
     await frame();
-    const leftDim = [...made[0].nodes].filter(([, n]) => n.nodeEl.classList.contains("gtm-n-dim")).map(([id]) => id);
-    expect(leftDim).toEqual(["a"]);
-    expect(host.querySelectorAll(".gtm-canvas-pane.is-right .gtm-marks .gtm-ghost")).toHaveLength(1);
-    expect(host.querySelectorAll(".gtm-canvas-pane.is-right .gtm-marks .gtm-goback")).toHaveLength(1);
-    expect(host.querySelectorAll(".gtm-native-links")).toHaveLength(0);
+    expectPastToNow(host);
     cmp.destroy();
   });
 
-  it("selecting on the right does the same in reverse", async () => {
+  it("selecting the same card on the current side shows exactly the same", async () => {
     made.length = 0;
     const { host, cmp } = await drawSimple();
     click(host, "right", 310, 410);
     await frame();
-    const rightDim = [...made[1].nodes].filter(([, n]) => n.nodeEl.classList.contains("gtm-n-dim")).map(([id]) => id);
-    expect(rightDim).toEqual(["a"]);
-    expect(made[0].nodes.get("a")!.nodeEl.classList.contains("gtm-n-dim")).toBe(false);
-    expect(host.querySelectorAll(".gtm-canvas-pane.is-left .gtm-marks .gtm-ghost")).toHaveLength(1);
-    expect(host.querySelectorAll(".gtm-canvas-pane.is-left .gtm-marks .gtm-goback")).toHaveLength(1);
+    expectPastToNow(host);
     expect(host.querySelector(".gtm-region-title")?.textContent).toContain("1 replaces");
     cmp.destroy();
   });
 });
+
+/** Card m moved from y=0 to y=400: past side dims the rest; current side shows the past ghost and an arrow ghost → now. */
+function expectPastToNow(host: HTMLElement) {
+  const dimmed = (e: FakeEngine) => [...e.nodes].filter(([, n]) => n.nodeEl.classList.contains("gtm-n-dim")).map(([id]) => id);
+  expect(dimmed(made[0])).toEqual(["a"]);
+  expect(dimmed(made[1])).toEqual([]);
+  expect(made[0].nodes.get("m")!.nodeEl.classList.contains("gtm-n-selected")).toBe(true);
+  expect(host.querySelectorAll(".gtm-canvas-pane.is-left .gtm-marks .gtm-ghost, .gtm-canvas-pane.is-left .gtm-marks .gtm-goback")).toHaveLength(0);
+  const ghost = host.querySelector(".gtm-canvas-pane.is-right .gtm-marks .gtm-ghost")!;
+  expect([ghost.getAttribute("x"), ghost.getAttribute("y")]).toEqual(["300", "0"]);
+  const arrow = host.querySelector(".gtm-canvas-pane.is-right .gtm-marks .gtm-goback")!;
+  expect(arrow.getAttribute("d")).toBe("M400,50 L400,450");
+}
 
 const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
 
