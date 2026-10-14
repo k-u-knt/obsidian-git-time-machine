@@ -8,6 +8,8 @@ import type { RepoContext } from "../main";
 import { defaultRegionState } from "../region/RegionTool";
 import type { RestorePlan } from "../region/restorePlan";
 import { CanvasCompare, type CanvasViewState } from "../render/CanvasCompare";
+import { findCanvasEngine } from "../render/nativeCanvas";
+import { NativeCanvasCompare } from "../render/NativeCanvasCompare";
 import { MarkdownCompare } from "../render/MarkdownCompare";
 import { fileKind, looksBinary } from "../render/registry";
 import { SourceCompare } from "../render/SourceCompare";
@@ -620,6 +622,25 @@ export class TimeMachineView extends ItemView {
   private async renderCanvas(entry: TimelineEntry): Promise<void> {
     if (!this.canvasDiff) return;
     const previous = this.renderer;
+    // Prefer Obsidian's own canvas engine; fall back to our drawing if it can't be reached.
+    const kit = findCanvasEngine(this.app);
+    const file = this.file();
+    if (kit && file) {
+      previous?.destroy();
+      const native = new NativeCanvasCompare({
+        app: this.app,
+        kit,
+        file,
+        diff: this.canvasDiff,
+        leftLabel: this.when(entry),
+        state: this.canvasState,
+        onUseText: (id) => void this.restoreCardText(id),
+        onRestorePlan: (plan, keep) => void this.restoreCanvasPlan(plan, keep),
+      });
+      this.renderer = native;
+      await native.render(this.compareEl);
+      return;
+    }
     const next = new CanvasCompare({
       app: this.app,
       parent: this,

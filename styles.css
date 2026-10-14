@@ -155,3 +155,28 @@
 .gtm-region-option { display: flex; align-items: center; gap: 6px; }
 .gtm-region-option.is-disabled { opacity: 0.5; }
 .gtm-region-actions { display: flex; gap: 8px; }
+
+/* Obsidian's own canvas engine inside the comparison */
+.gtm-native-body { position: relative; flex: 1; min-height: 0; --gtm-zoom: 1; }
+.gtm-native-host { position: absolute; inset: 0; }
+.gtm-native-host > .canvas-wrapper { position: absolute; inset: 0; }
+.gtm-native-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; z-index: 50; }
+.gtm-native-body.is-drawing-tool .gtm-native-overlay { pointer-events: all; cursor: crosshair; }
+.canvas-node.gtm-n { outline-style: solid; outline-width: calc(3px / var(--gtm-zoom)); outline-offset: calc(2px / var(--gtm-zoom)); border-radius: var(--radius-m); }
+.canvas-node.gtm-n-edited { outline-color: var(--color-orange); }
+.canvas-node.gtm-n-added { outline-color: var(--color-green); }
+.canvas-node.gtm-n-removed { outline-color: var(--color-red); outline-style: dashed; }
+.canvas-node.gtm-n-moved { outline-color: var(--color-blue); }
+.canvas-node.gtm-n-selected { box-shadow: 0 0 0 calc(6px / var(--gtm-zoom)) color-mix(in srgb, var(--interactive-accent) 60%, transparent); }
+.canvas-node.gtm-n-doomed { outline: calc(3px / var(--gtm-zoom)) dashed var(--color-red); }
+.canvas-node.gtm-flash { box-shadow: 0 0 0 calc(8px / var(--gtm-zoom)) var(--interactive-accent); }
+.gtm-n-tag { position: absolute; top: calc(-1 * (22px / var(--gtm-zoom))); right: 0; z-index: 5; font-size: calc(11px / var(--gtm-zoom)); line-height: 1.6; font-weight: var(--font-semibold); padding: 0 calc(7px / var(--gtm-zoom)); border-radius: 999px; color: var(--text-on-accent); pointer-events: none; white-space: nowrap; }
+.gtm-n-edited .gtm-n-tag { background: var(--color-orange); }
+.gtm-n-added .gtm-n-tag { background: var(--color-green); }
+.gtm-n-removed .gtm-n-tag { background: var(--color-red); }
+.gtm-n-moved .gtm-n-tag { background: var(--color-blue); }
+.gtm-n-action { position: absolute; bottom: calc(-1 * (30px / var(--gtm-zoom))); right: 0; z-index: 5; height: auto; font-size: calc(12px / var(--gtm-zoom)); padding: 0 calc(8px / var(--gtm-zoom)); }
+.gtm-n-action:hover { background: var(--interactive-accent); color: var(--text-on-accent); }
+.gtm-e-added .canvas-display-path { stroke: var(--color-green); stroke-width: calc(var(--canvas-edge-width, 3px) * 1.6); }
+.gtm-e-edited .canvas-display-path { stroke: var(--color-orange); stroke-width: calc(var(--canvas-edge-width, 3px) * 1.6); }
+.gtm-e-removed .canvas-display-path { stroke: var(--color-red); stroke-dasharray: 10 8; }
