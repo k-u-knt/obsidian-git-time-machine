@@ -92,6 +92,25 @@ describe("HistoryService (real git)", () => {
     expect(await history.headHash()).toBe(hashes[3]);
   });
 
+  it("leaves out commits that deleted the file, so every version can be read", async () => {
+    const r = await makeRepo();
+    try {
+      await r.write("n.md", "v1\n");
+      r.commit("create", 1700000100);
+      r.git("rm", "-q", "n.md");
+      r.commit("delete", 1700000200);
+      await r.write("n.md", "v2\n");
+      r.commit("recreate", 1700000300);
+      const h = new HistoryService(new GitRunner("git", r.dir));
+      const versions = await h.fileHistory("n.md", { limit: 50 });
+      expect(versions).toHaveLength(2);
+      const texts = await Promise.all(versions.map(async (v) => (await h.readAt(v.hash, v.path)).toString("utf8")));
+      expect(texts).toEqual(["v2\n", "v1\n"]);
+    } finally {
+      await r.cleanup();
+    }
+  });
+
   it("handles a repo with no commits", async () => {
     const empty = await makeRepo();
     try {

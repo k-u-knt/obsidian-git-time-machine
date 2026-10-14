@@ -24,6 +24,8 @@ export class HistoryService {
         "--follow",
         "-M",
         "--diff-merges=first-parent",
+        // Skip commits that deleted the file: there is nothing to show at them.
+        "--diff-filter=d",
         "--format=%x1e%H%x1f%at",
         "--numstat",
         "-z",
