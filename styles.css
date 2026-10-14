@@ -200,3 +200,8 @@
 .gtm-ghost-edited { stroke: var(--color-orange); fill: color-mix(in srgb, var(--color-orange) 8%, transparent); }
 .gtm-ghost-added { stroke: var(--color-green); fill: color-mix(in srgb, var(--color-green) 8%, transparent); }
 .gtm-ghost-removed { stroke: var(--color-red); fill: color-mix(in srgb, var(--color-red) 8%, transparent); }
+.gtm-ghost-past { stroke: var(--color-red); fill: color-mix(in srgb, var(--color-red) 10%, transparent); }
+.gtm-ghost-now { stroke: var(--color-green); fill: color-mix(in srgb, var(--color-green) 10%, transparent); }
+.gtm-stop-past { stop-color: var(--color-red); }
+.gtm-stop-now { stop-color: var(--color-green); }
+.gtm-goback { stroke-width: 3; }

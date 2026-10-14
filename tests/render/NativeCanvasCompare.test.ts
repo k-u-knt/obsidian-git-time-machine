@@ -89,37 +89,46 @@ describe("NativeCanvasCompare", () => {
     cmp.destroy();
   });
 
-  it("selecting on the left dims the rest of the past side and, on the current side, draws the past position with an arrow to now", async () => {
+  it("picking on the past side dims the rest there; the current side shows a red ghost where it was and a red→green arrow to now", async () => {
     made.length = 0;
     const { host, cmp } = await drawSimple();
     click(host, "left", 310, 10);
     await frame();
-    expectPastToNow(host);
+    expect(dimmed(made[0])).toEqual(["a"]);
+    expect(dimmed(made[1])).toEqual([]);
+    const ghost = host.querySelector(".gtm-canvas-pane.is-right .gtm-marks .gtm-ghost")!;
+    expect(ghost.classList.contains("gtm-ghost-past")).toBe(true);
+    expect([ghost.getAttribute("x"), ghost.getAttribute("y")]).toEqual(["300", "0"]);
+    expectPastToNowArrow(host, "right");
+    expect(host.querySelectorAll(".gtm-native-links")).toHaveLength(0);
     cmp.destroy();
   });
 
-  it("selecting the same card on the current side shows exactly the same", async () => {
+  it("picking on the current side dims the rest there; the past side shows a green ghost where it is now and a red→green arrow to it", async () => {
     made.length = 0;
     const { host, cmp } = await drawSimple();
     click(host, "right", 310, 410);
     await frame();
-    expectPastToNow(host);
+    expect(dimmed(made[1])).toEqual(["a"]);
+    expect(dimmed(made[0])).toEqual([]);
+    const ghost = host.querySelector(".gtm-canvas-pane.is-left .gtm-marks .gtm-ghost")!;
+    expect(ghost.classList.contains("gtm-ghost-now")).toBe(true);
+    expect([ghost.getAttribute("x"), ghost.getAttribute("y")]).toEqual(["300", "400"]);
+    expectPastToNowArrow(host, "left");
     expect(host.querySelector(".gtm-region-title")?.textContent).toContain("1 replaces");
     cmp.destroy();
   });
 });
 
-/** Card m moved from y=0 to y=400: past side dims the rest; current side shows the past ghost and an arrow ghost → now. */
-function expectPastToNow(host: HTMLElement) {
-  const dimmed = (e: FakeEngine) => [...e.nodes].filter(([, n]) => n.nodeEl.classList.contains("gtm-n-dim")).map(([id]) => id);
-  expect(dimmed(made[0])).toEqual(["a"]);
-  expect(dimmed(made[1])).toEqual([]);
-  expect(made[0].nodes.get("m")!.nodeEl.classList.contains("gtm-n-selected")).toBe(true);
-  expect(host.querySelectorAll(".gtm-canvas-pane.is-left .gtm-marks .gtm-ghost, .gtm-canvas-pane.is-left .gtm-marks .gtm-goback")).toHaveLength(0);
-  const ghost = host.querySelector(".gtm-canvas-pane.is-right .gtm-marks .gtm-ghost")!;
-  expect([ghost.getAttribute("x"), ghost.getAttribute("y")]).toEqual(["300", "0"]);
-  const arrow = host.querySelector(".gtm-canvas-pane.is-right .gtm-marks .gtm-goback")!;
+const dimmed = (e: FakeEngine) => [...e.nodes].filter(([, n]) => n.nodeEl.classList.contains("gtm-n-dim")).map(([id]) => id);
+
+/** Card m moved from y=0 to y=400: the arrow runs from its past centre to its current centre, red fading to green. */
+function expectPastToNowArrow(host: HTMLElement, side: "left" | "right") {
+  const arrow = host.querySelector(`.gtm-canvas-pane.is-${side} .gtm-marks .gtm-goback`)!;
   expect(arrow.getAttribute("d")).toBe("M400,50 L400,450");
+  const gradientId = /url\(#(.+)\)/.exec(arrow.getAttribute("stroke") ?? "")?.[1];
+  const stops = [...host.querySelectorAll(`#${gradientId} stop`)].map((st) => st.getAttribute("class"));
+  expect(stops).toEqual(["gtm-stop-past", "gtm-stop-now"]);
 }
 
 const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));

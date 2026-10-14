@@ -41,13 +41,14 @@ export class NativeCanvasCompare implements CompareRenderer {
   private lastLeft = "";
   private lastRight = "";
   private destroyed = false;
-  /** The cards the user picked (on either side). */
-  private visual: { ids: Set<string> } = { ids: new Set() };
+  /** What the user picked, and on which side: drives dimming there and ghosts on the other side. */
+  private visual: { side: "left" | "right"; ids: Set<string> } = { side: "left", ids: new Set() };
   private plan: RestorePlan | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private regionOverlay!: SVGSVGElement;
   private fromRight = false;
   private marksKey = "";
+  private gradients = 0;
 
   constructor(private readonly o: NativeCanvasCompareOptions) {}
 
@@ -107,7 +108,7 @@ export class NativeCanvasCompare implements CompareRenderer {
       },
       onChange: (selected, plan) => {
         this.plan = plan;
-        if (!this.fromRight) this.visual = { ids: new Set(selected) };
+        if (!this.fromRight) this.visual = { side: "left", ids: new Set(selected) };
       },
       onRestore: (plan, keep) => this.o.onRestorePlan(plan, keep),
     });
@@ -248,43 +249,67 @@ export class NativeCanvasCompare implements CompareRenderer {
   }
 
   /**
-   * Always reads past → current, whichever side the cards were picked on: the past side dims everything
-   * but the picked cards ("where they were"); the current side shows each picked card's past position as
-   * a dashed ghost, with an arrow from there to where the card is now.
+   * The side where cards were picked dims everything else; the other side shows each picked card's "ghost"
+   * (left pick: where it would go back to; right pick: where it is now) and a line showing the move.
    */
   private highlight(): void {
-    const ids = this.visual.ids;
+    const v = this.visual;
     const remove = new Set(this.plan?.remove ?? []);
-    for (const [id, node] of this.left.canvas.nodes) {
-      node.nodeEl?.toggleClass("gtm-n-dim", ids.size > 0 && !ids.has(id));
-      node.nodeEl?.toggleClass("gtm-n-selected", ids.has(id));
+    for (const s of [this.left, this.right]) {
+      const picking = v.ids.size > 0 && s.which === v.side;
+      for (const [id, node] of s.canvas.nodes) {
+        node.nodeEl?.toggleClass("gtm-n-dim", picking && !v.ids.has(id));
+        node.nodeEl?.toggleClass("gtm-n-selected", picking && v.ids.has(id));
+        if (s.which === "right") node.nodeEl?.toggleClass("gtm-n-doomed", remove.has(id));
+      }
     }
-    for (const [id, node] of this.right.canvas.nodes) node.nodeEl?.toggleClass("gtm-n-doomed", remove.has(id));
-    const key = JSON.stringify([...ids]);
+    const keep = this.o.state.region.keepPositions;
+    const key = JSON.stringify([v.side, [...v.ids], keep]);
     if (key === this.marksKey) return;
     this.marksKey = key;
-    for (const el of [...this.right.marks.querySelectorAll(".gtm-ghost, .gtm-goback")]) el.remove();
+    for (const s of [this.left, this.right]) for (const el of [...s.marks.querySelectorAll(".gtm-ghost, .gtm-goback, .gtm-grad")]) el.remove();
     const { diff } = this.o;
     const past = new Map(diff.past.nodes.map((n) => [n.id, n]));
     const current = new Map(diff.current.nodes.map((n) => [n.id, n]));
-    for (const id of ids) {
-      const state = diff.nodes.get(id) ?? "same";
+    const back = { dx: -diff.anchor.dx, dy: -diff.anchor.dy };
+    for (const id of v.ids) {
+      if ((diff.nodes.get(id) ?? "same") === "same") continue;
       const p = past.get(id);
-      if (!p || state === "same") continue;
-      this.ghost(this.right, shiftNode(p, diff.anchor), current.get(id), state);
+      const c = current.get(id);
+      if (v.side === "left") {
+        // Picked in the past: on the current side, where it was (red) → where it is now.
+        if (!p) continue;
+        const then = shiftNode(p, diff.anchor);
+        this.drawGhost(this.right, then, "past");
+        if (c) this.drawArrow(this.right, then, c);
+      } else {
+        // Picked now: on the past side, where it is now (green), reached from where it was.
+        if (!c) continue;
+        const now = shiftNode(c, back);
+        this.drawGhost(this.left, now, "now");
+        if (p) this.drawArrow(this.left, p, now);
+      }
     }
   }
 
-  /** A dashed outline where the card was (`then`), and an arrow from there to where it is now (`now`). */
-  private ghost(side: Side, then: Box, now: Box | undefined, state: ItemState): void {
-    side.marks.createSvg("rect", { cls: ["gtm-ghost", `gtm-ghost-${state}`], attr: { x: then.x, y: then.y, width: then.width, height: then.height, rx: 8 } });
-    if (!now || (now.x === then.x && now.y === then.y)) return;
+  /** A dashed outline: red for a past position, green for a current one. */
+  private drawGhost(side: Side, box: Box, kind: "past" | "now"): void {
+    side.marks.createSvg("rect", { cls: ["gtm-ghost", `gtm-ghost-${kind}`], attr: { x: box.x, y: box.y, width: box.width, height: box.height, rx: 8 } });
+  }
+
+  /** An arrow from a past position to a current one, fading red → green. */
+  private drawArrow(side: Side, from: Box, to: Box): void {
+    if (from.x === to.x && from.y === to.y) return;
+    const a = { x: from.x + from.width / 2, y: from.y + from.height / 2 };
+    const b = { x: to.x + to.width / 2, y: to.y + to.height / 2 };
+    const id = `gtm-grad-${side.which}-${++this.gradients}`;
+    const defs = side.marks.querySelector("defs") ?? side.marks.createSvg("defs");
+    const grad = defs.createSvg("linearGradient", { cls: "gtm-grad", attr: { id, gradientUnits: "userSpaceOnUse", x1: a.x, y1: a.y, x2: b.x, y2: b.y } });
+    grad.createSvg("stop", { cls: "gtm-stop-past", attr: { offset: "0" } });
+    grad.createSvg("stop", { cls: "gtm-stop-now", attr: { offset: "1" } });
     side.marks.createSvg("path", {
-      cls: ["gtm-goback", `gtm-goback-${state}`],
-      attr: {
-        d: `M${then.x + then.width / 2},${then.y + then.height / 2} L${now.x + now.width / 2},${now.y + now.height / 2}`,
-        "marker-end": `url(#goback-${side.which}-${state})`,
-      },
+      cls: "gtm-goback",
+      attr: { d: `M${a.x},${a.y} L${b.x},${b.y}`, stroke: `url(#${id})`, "marker-end": `url(#goback-${side.which}-added)` },
     });
   }
 
@@ -301,10 +326,10 @@ export class NativeCanvasCompare implements CompareRenderer {
       if ((ev.target as HTMLElement).closest?.("button, a, input")) return;
       const id = itemAt(current, this.right.canvas.posFromEvt(ev));
       const picked = id ? expandSelection(current, [id]) : [];
-      const ids = new Set(ev.shiftKey ? this.visual.ids : []);
+      const ids = new Set(ev.shiftKey && this.visual.side === "right" ? this.visual.ids : []);
       if (ev.shiftKey && id && ids.has(id)) for (const x of picked) ids.delete(x);
       else for (const x of picked) ids.add(x);
-      this.visual = { ids };
+      this.visual = { side: "right", ids };
       this.fromRight = true;
       try {
         this.tool?.selectIds([...ids]);
