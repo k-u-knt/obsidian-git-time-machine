@@ -2,6 +2,7 @@ import { setIcon, TFile, type App } from "obsidian";
 import { describeCanvasChanges, GEOMETRY_FIELDS, nodeTitle, sameItem, shiftNode, type CanvasDiff, type ItemState } from "../diff/canvasDiff";
 import { canvasAdapter } from "../region/canvasAdapter";
 import { shiftRegion } from "../region/geometry";
+import { expandSelection, itemAt } from "../region/selection";
 import { RegionTool, type Tool } from "../region/RegionTool";
 import type { RestorePlan } from "../region/restorePlan";
 import type { CanvasViewState } from "./CanvasCompare";
@@ -22,7 +23,8 @@ export interface NativeCanvasCompareOptions {
 interface Side {
   canvas: NativeCanvas;
   pane: HTMLElement;
-  overlay: SVGSVGElement;
+  /** Ghosts and moving lines for a selection made on the other side. */
+  marks: SVGSVGElement;
   which: "left" | "right";
 }
 
@@ -39,12 +41,13 @@ export class NativeCanvasCompare implements CompareRenderer {
   private lastLeft = "";
   private lastRight = "";
   private destroyed = false;
-  private selected = new Set<string>();
+  /** What the user picked, and on which side: drives dimming there and ghosts on the other side. */
+  private visual: { side: "left" | "right"; ids: Set<string> } = { side: "left", ids: new Set() };
   private plan: RestorePlan | null = null;
   private resizeObserver: ResizeObserver | null = null;
-  private panesEl!: HTMLElement;
-  /** Lines across both sides joining a selected card's past and current positions. */
-  private links!: SVGSVGElement;
+  private regionOverlay!: SVGSVGElement;
+  private fromRight = false;
+  private marksKey = "";
 
   constructor(private readonly o: NativeCanvasCompareOptions) {}
 
@@ -71,11 +74,10 @@ export class NativeCanvasCompare implements CompareRenderer {
     toolbar.createEl("button", { text: "Fit" }).addEventListener("click", () => this.fit());
 
     const panes = root.createDiv({ cls: "gtm-canvas-panes" });
-    this.panesEl = panes;
     this.left = this.side(panes, "left", this.o.leftLabel, "read-only", "lock", diff.past);
     this.right = this.side(panes, "right", "Now", "your canvas", "pencil", diff.current);
-    this.links = panes.createSvg("svg", { cls: "gtm-native-links" });
-    addArrows(this.links, "link");
+    this.regionOverlay = this.left.pane.createSvg("svg", { cls: ["gtm-native-overlay", "gtm-region"], attr: { preserveAspectRatio: "none" } });
+    this.listenForRightClicks(canvasAdapter(diff.current));
     const bar = root.createDiv({ cls: "gtm-region-bar" });
 
     this.mark(this.left);
@@ -92,7 +94,7 @@ export class NativeCanvasCompare implements CompareRenderer {
       past: canvasAdapter(diff.past),
       current: canvasAdapter(diff.current),
       stage: this.left.pane,
-      overlay: this.left.overlay,
+      overlay: this.regionOverlay,
       toScene: (ev) => this.left.canvas.posFromEvt(ev),
       state: state.region,
       bar,
@@ -104,8 +106,8 @@ export class NativeCanvasCompare implements CompareRenderer {
         return n ? nodeTitle(n) : id;
       },
       onChange: (selected, plan) => {
-        this.selected = new Set(selected);
         this.plan = plan;
+        if (!this.fromRight) this.visual = { side: "left", ids: new Set(selected) };
       },
       onRestore: (plan, keep) => this.o.onRestorePlan(plan, keep),
     });
@@ -166,9 +168,9 @@ export class NativeCanvasCompare implements CompareRenderer {
     const container = body.createDiv({ cls: "gtm-native-host" });
     const canvas = createReadonlyCanvas(this.o.kit, this.o.app, this.o.file, container, data);
     // Scaled exactly like the canvas (no letterboxing), and clipped to this side by CSS.
-    const overlay = body.createSvg("svg", { cls: "gtm-native-overlay", attr: { preserveAspectRatio: "none" } });
-    if (which === "right") addArrows(overlay, "goback");
-    return { canvas, pane: body, overlay, which };
+    const marks = body.createSvg("svg", { cls: ["gtm-native-overlay", "gtm-marks"], attr: { preserveAspectRatio: "none" } });
+    addArrows(marks, `goback-${which}`);
+    return { canvas, pane: body, marks, which };
   }
 
   /** Adds change marks to Obsidian's own card and connection elements (they exist once a card is drawn). */
@@ -179,7 +181,8 @@ export class NativeCanvasCompare implements CompareRenderer {
       if (!el || el.dataset.gtmMarked) continue;
       el.dataset.gtmMarked = "1";
       const state = diff.nodes.get(id) ?? "same";
-      if (state === "same") continue;
+      // Moves and resizes are shown on the past side only (where you'd restore from).
+      if (state === "same" || (state === "moved" && side.which === "right")) continue;
       el.addClass("gtm-n", `gtm-n-${state}`);
       el.createDiv({ cls: "gtm-n-tag", text: this.tagFor(id, state) });
       const pastNode = diff.past.nodes.find((n) => n.id === id);
@@ -234,77 +237,94 @@ export class NativeCanvasCompare implements CompareRenderer {
     }
     for (const s of [this.left, this.right]) {
       const bb = s.canvas.getViewportBBox();
-      s.overlay.setAttr("viewBox", `${bb.minX} ${bb.minY} ${bb.maxX - bb.minX} ${bb.maxY - bb.minY}`);
+      const box = `${bb.minX} ${bb.minY} ${bb.maxX - bb.minX} ${bb.maxY - bb.minY}`;
+      s.marks.setAttr("viewBox", box);
+      if (s.which === "left") this.regionOverlay.setAttr("viewBox", box);
       s.pane.style.setProperty("--gtm-zoom", String(s.canvas.scale || 1));
       this.mark(s);
     }
     this.highlight();
-    this.drawLinks();
     this.frame = window.requestAnimationFrame(() => this.loop());
   }
 
-  /** Selection on the left; ghosts where restored cards will land and cards to be removed on the right. */
+  /**
+   * The side where cards were picked dims everything else; the other side shows each picked card's "ghost"
+   * (left pick: where it would go back to; right pick: where it is now) and a line showing the move.
+   */
   private highlight(): void {
-    for (const [id, node] of this.left.canvas.nodes) node.nodeEl?.toggleClass("gtm-n-selected", this.selected.has(id));
+    const v = this.visual;
     const remove = new Set(this.plan?.remove ?? []);
-    for (const [id, node] of this.right.canvas.nodes) node.nodeEl?.toggleClass("gtm-n-doomed", remove.has(id));
-    const key = JSON.stringify([this.plan?.add, this.plan?.replace, this.o.state.region.keepPositions]);
-    if (this.right.overlay.dataset.key === key) return;
-    this.right.overlay.dataset.key = key;
-    for (const el of [...this.right.overlay.querySelectorAll(".gtm-ghost, .gtm-goback")]) el.remove();
-    if (!this.plan) return;
-    const past = new Map(this.o.diff.past.nodes.map((n) => [n.id, n]));
-    const current = new Map(this.o.diff.current.nodes.map((n) => [n.id, n]));
-    for (const id of [...this.plan.add, ...this.plan.replace]) {
-      const p = past.get(id);
-      if (!p) continue;
-      const c = current.get(id);
-      const box = this.o.state.region.keepPositions && c ? c : shiftNode(p, this.o.diff.anchor);
-      this.right.overlay.createSvg("rect", { cls: "gtm-ghost", attr: { x: box.x, y: box.y, width: box.width, height: box.height, rx: 8 } });
-      // "How it moves when you go back": an arrow from where the card is now to where it would go.
-      if (c && (c.x !== box.x || c.y !== box.y)) {
-        const state = this.o.diff.nodes.get(id) ?? "same";
-        this.right.overlay.createSvg("path", {
-          cls: ["gtm-goback", `gtm-goback-${state}`],
-          attr: { d: `M${c.x + c.width / 2},${c.y + c.height / 2} L${box.x + box.width / 2},${box.y + box.height / 2}`, "marker-end": `url(#gtm-goback-${state})` },
-        });
+    for (const s of [this.left, this.right]) {
+      const picking = v.ids.size > 0 && s.which === v.side;
+      for (const [id, node] of s.canvas.nodes) {
+        node.nodeEl?.toggleClass("gtm-n-dim", picking && !v.ids.has(id));
+        node.nodeEl?.toggleClass("gtm-n-selected", picking && v.ids.has(id));
+        if (s.which === "right") node.nodeEl?.toggleClass("gtm-n-doomed", remove.has(id));
+      }
+    }
+    const keep = this.o.state.region.keepPositions;
+    const key = JSON.stringify([v.side, [...v.ids], keep]);
+    if (key === this.marksKey) return;
+    this.marksKey = key;
+    for (const s of [this.left, this.right]) for (const el of [...s.marks.querySelectorAll(".gtm-ghost, .gtm-goback")]) el.remove();
+    const { diff } = this.o;
+    const past = new Map(diff.past.nodes.map((n) => [n.id, n]));
+    const current = new Map(diff.current.nodes.map((n) => [n.id, n]));
+    const back = { dx: -diff.anchor.dx, dy: -diff.anchor.dy };
+    for (const id of v.ids) {
+      const state = diff.nodes.get(id) ?? "same";
+      if (state === "same") continue;
+      if (v.side === "left") {
+        const p = past.get(id);
+        if (!p) continue;
+        const c = current.get(id);
+        const target = keep && c ? c : shiftNode(p, diff.anchor);
+        this.ghost(this.right, target, c, state);
+      } else {
+        const c = current.get(id);
+        if (!c) continue;
+        this.ghost(this.left, shiftNode(c, back), past.get(id), state);
       }
     }
   }
 
-  /** Joins each selected card's place now (right) to its place then (left), in the colour of its change. */
-  private drawLinks(): void {
-    const svg = this.links;
-    const existing = svg.querySelectorAll(".gtm-link");
-    if (!this.selected.size && !existing.length) return;
-    for (const el of [...existing]) el.remove();
-    const past = new Map(this.o.diff.past.nodes.map((n) => [n.id, n]));
-    const current = new Map(this.o.diff.current.nodes.map((n) => [n.id, n]));
-    for (const id of this.selected) {
-      const p = past.get(id);
-      if (!p) continue;
-      const now = current.get(id) ?? shiftNode(p, this.o.diff.anchor);
-      const state = this.o.diff.nodes.get(id) ?? "same";
-      const a = this.toPanes(this.right, now);
-      const b = this.toPanes(this.left, p);
-      const from = { x: a.x, y: a.y + a.h / 2 };
-      const to = { x: b.x + b.w, y: b.y + b.h / 2 };
-      const bend = Math.max(40, Math.abs(from.x - to.x) / 3);
-      svg.createSvg("path", {
-        cls: ["gtm-link", `gtm-link-${state}`],
-        attr: { d: `M${from.x},${from.y} C${from.x - bend},${from.y} ${to.x + bend},${to.y} ${to.x},${to.y}`, "marker-end": `url(#gtm-link-${state})` },
-      });
-    }
+  /** A dashed outline at `target`, and an arrow to it from `from` (the card's own position on that side). */
+  private ghost(side: Side, target: Box, from: Box | undefined, state: ItemState): void {
+    side.marks.createSvg("rect", { cls: ["gtm-ghost", `gtm-ghost-${state}`], attr: { x: target.x, y: target.y, width: target.width, height: target.height, rx: 8 } });
+    if (!from || (from.x === target.x && from.y === target.y)) return;
+    side.marks.createSvg("path", {
+      cls: ["gtm-goback", `gtm-goback-${state}`],
+      attr: {
+        d: `M${from.x + from.width / 2},${from.y + from.height / 2} L${target.x + target.width / 2},${target.y + target.height / 2}`,
+        "marker-end": `url(#goback-${side.which}-${state})`,
+      },
+    });
   }
 
-  /** A card's box in the panes' pixel coordinates, using what the side's canvas currently shows. */
-  private toPanes(side: Side, box: { x: number; y: number; width: number; height: number }): { x: number; y: number; w: number; h: number } {
-    const bb = side.canvas.getViewportBBox();
-    const r = side.pane.getBoundingClientRect();
-    const pr = this.panesEl.getBoundingClientRect();
-    const kx = r.width / Math.max(1e-6, bb.maxX - bb.minX);
-    const ky = r.height / Math.max(1e-6, bb.maxY - bb.minY);
-    return { x: r.left - pr.left + (box.x - bb.minX) * kx, y: r.top - pr.top + (box.y - bb.minY) * ky, w: box.width * kx, h: box.height * ky };
+  /** Select-tool clicks on the right side: pick the current card (Shift adds), and mirror it into the restore plan. */
+  private listenForRightClicks(current: ReturnType<typeof canvasAdapter>): void {
+    const pane = this.right.pane;
+    let down: { x: number; y: number } | null = null;
+    pane.addEventListener("pointerdown", (ev) => {
+      if (ev.button === 0) down = { x: ev.clientX, y: ev.clientY };
+    });
+    pane.addEventListener("pointerup", (ev) => {
+      if (!down || this.o.state.region.tool !== "select" || Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 4) return;
+      down = null;
+      if ((ev.target as HTMLElement).closest?.("button, a, input")) return;
+      const id = itemAt(current, this.right.canvas.posFromEvt(ev));
+      const picked = id ? expandSelection(current, [id]) : [];
+      const ids = new Set(ev.shiftKey && this.visual.side === "right" ? this.visual.ids : []);
+      if (ev.shiftKey && id && ids.has(id)) for (const x of picked) ids.delete(x);
+      else for (const x of picked) ids.add(x);
+      this.visual = { side: "right", ids };
+      this.fromRight = true;
+      try {
+        this.tool?.selectIds([...ids]);
+      } finally {
+        this.fromRight = false;
+      }
+    });
   }
 
   private fit(): void {
@@ -320,6 +340,9 @@ export class NativeCanvasCompare implements CompareRenderer {
     }
   }
 }
+
+/** A card's box in canvas coordinates. */
+type Box = { x: number; y: number; width: number; height: number };
 
 /** Arrowheads in each change colour, ids `${prefix}-${state}`. */
 function addArrows(svg: SVGSVGElement, prefix: string): void {

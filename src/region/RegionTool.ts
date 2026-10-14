@@ -64,6 +64,13 @@ export class RegionTool {
     this.recompute();
   }
 
+  /** Selects these items (and what they bring) — e.g. cards picked on the other side. Unknown ids are ignored. */
+  selectIds(ids: string[]): void {
+    this.o.state.selected = expandSelection(this.o.past, ids);
+    this.o.state.region = null;
+    this.recompute();
+  }
+
   /** Selects one item and everything it brings (used by a card's "Restore card" button). */
   selectOnly(id: string): RestorePlan | null {
     this.o.state.selected = expandSelection(this.o.past, [id]);

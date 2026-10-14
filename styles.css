@@ -194,3 +194,9 @@
 .gtm-arrow-edited path { fill: var(--color-orange); }
 .gtm-arrow-added path { fill: var(--color-green); }
 .gtm-arrow-removed path { fill: var(--color-red); }
+.canvas-node.gtm-n-dim { opacity: 0.25; transition: opacity 120ms; }
+.gtm-ghost { stroke-dasharray: 8 6; }
+.gtm-ghost-moved { stroke: var(--color-blue); fill: color-mix(in srgb, var(--color-blue) 8%, transparent); }
+.gtm-ghost-edited { stroke: var(--color-orange); fill: color-mix(in srgb, var(--color-orange) 8%, transparent); }
+.gtm-ghost-added { stroke: var(--color-green); fill: color-mix(in srgb, var(--color-green) 8%, transparent); }
+.gtm-ghost-removed { stroke: var(--color-red); fill: color-mix(in srgb, var(--color-red) 8%, transparent); }

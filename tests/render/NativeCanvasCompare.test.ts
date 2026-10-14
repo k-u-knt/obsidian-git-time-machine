@@ -38,7 +38,7 @@ class FakeEngine {
   getState() { return { x: 0, y: 0, zoom: 0 }; }
   setState() {}
   getViewportBBox() { return { minX: 0, minY: 0, maxX: 100, maxY: 100 }; }
-  posFromEvt() { return { x: 0, y: 0 }; }
+  posFromEvt(ev: MouseEvent) { return { x: ev.clientX, y: ev.clientY }; }
   requestFrame() {}
 }
 
@@ -76,26 +76,54 @@ describe("NativeCanvasCompare", () => {
   it("keeps each side's drawings inside that side and scaled exactly like its canvas", async () => {
     made.length = 0;
     const { host } = await drawSimple();
-    const overlays = [...host.querySelectorAll(".gtm-native-overlay")];
-    expect(overlays).toHaveLength(2);
-    for (const o of overlays) expect(o.getAttribute("preserveAspectRatio")).toBe("none");
-    expect(overlays[0].closest(".gtm-canvas-pane.is-left")).not.toBeNull();
-    expect(overlays[1].closest(".gtm-canvas-pane.is-right")).not.toBeNull();
+    for (const o of host.querySelectorAll(".gtm-native-overlay")) expect(o.getAttribute("preserveAspectRatio")).toBe("none");
+    expect(host.querySelectorAll(".gtm-canvas-pane.is-left .gtm-marks, .gtm-canvas-pane.is-left .gtm-region")).toHaveLength(2);
+    expect(host.querySelectorAll(".gtm-canvas-pane.is-right .gtm-marks")).toHaveLength(1);
   });
 
-  it("links a selected card across the two sides, and shows on the right where it would go back to", async () => {
+  it("shows Moved/Resized tags only on the past side", async () => {
+    made.length = 0;
+    const { cmp } = await drawSimple();
+    expect([...made[0].wrapperEl.querySelectorAll(".gtm-n-tag")].map((t) => t.textContent)).toEqual(["Moved"]);
+    expect(made[1].wrapperEl.querySelectorAll(".gtm-n-tag")).toHaveLength(0);
+    cmp.destroy();
+  });
+
+  it("selecting on the left dims the rest of the left and shows on the right where it would go back, with no lines across", async () => {
     made.length = 0;
     const { host, cmp } = await drawSimple();
-    (cmp as unknown as { tool: { selectOnly(id: string): void } }).tool.selectOnly("m");
-    await new Promise((r) => requestAnimationFrame(() => r(null)));
-    expect([...host.querySelectorAll(".gtm-native-links .gtm-link")].map((l) => l.getAttribute("class"))).toEqual(["gtm-link gtm-link-moved"]);
-    expect(host.querySelectorAll(".gtm-canvas-pane.is-right .gtm-native-overlay .gtm-goback")).toHaveLength(1);
-    (cmp as unknown as { tool: { clear(): void } }).tool.clear();
-    await new Promise((r) => requestAnimationFrame(() => r(null)));
-    expect(host.querySelectorAll(".gtm-native-links .gtm-link")).toHaveLength(0);
+    click(host, "left", 310, 10);
+    await frame();
+    const leftDim = [...made[0].nodes].filter(([, n]) => n.nodeEl.classList.contains("gtm-n-dim")).map(([id]) => id);
+    expect(leftDim).toEqual(["a"]);
+    expect(host.querySelectorAll(".gtm-canvas-pane.is-right .gtm-marks .gtm-ghost")).toHaveLength(1);
+    expect(host.querySelectorAll(".gtm-canvas-pane.is-right .gtm-marks .gtm-goback")).toHaveLength(1);
+    expect(host.querySelectorAll(".gtm-native-links")).toHaveLength(0);
+    cmp.destroy();
+  });
+
+  it("selecting on the right does the same in reverse", async () => {
+    made.length = 0;
+    const { host, cmp } = await drawSimple();
+    click(host, "right", 310, 410);
+    await frame();
+    const rightDim = [...made[1].nodes].filter(([, n]) => n.nodeEl.classList.contains("gtm-n-dim")).map(([id]) => id);
+    expect(rightDim).toEqual(["a"]);
+    expect(made[0].nodes.get("a")!.nodeEl.classList.contains("gtm-n-dim")).toBe(false);
+    expect(host.querySelectorAll(".gtm-canvas-pane.is-left .gtm-marks .gtm-ghost")).toHaveLength(1);
+    expect(host.querySelectorAll(".gtm-canvas-pane.is-left .gtm-marks .gtm-goback")).toHaveLength(1);
+    expect(host.querySelector(".gtm-region-title")?.textContent).toContain("1 replaces");
     cmp.destroy();
   });
 });
+
+const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
+
+/** A plain click at scene point (x, y) on one side (the fake engine maps clientX/Y straight to the scene). */
+function click(host: HTMLElement, side: "left" | "right", x: number, y: number) {
+  const body = host.querySelector(`.gtm-canvas-pane.is-${side} .gtm-native-body`)!;
+  for (const type of ["pointerdown", "pointerup"]) body.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 }));
+}
 
 async function drawSimple() {
   const past = { nodes: [card("a", 0, "anchor"), card("m", 300, "moved me")], edges: [] };
