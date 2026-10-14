@@ -1,0 +1,28 @@
+{
+  "name": "obsidian-git-time-machine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc --noEmit -p . && node esbuild.config.mjs production",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "install-vault": "npm run build && node scripts/install-to-vault.mjs"
+  },
+  "dependencies": {
+    "@codemirror/merge": "6.12.2",
+    "diff": "9.0.0"
+  },
+  "devDependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13",
+    "@types/node": "^22.15.0",
+    "esbuild": "0.28.2",
+    "obsidian": "1.14.4",
+    "typescript": "5.9.3",
+    "vitest": "5.0.4"
+  }
+}
