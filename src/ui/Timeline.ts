@@ -30,7 +30,7 @@ export class Timeline {
     el.empty();
     const head = el.createDiv({ cls: "gtm-rail-head" });
     head.createDiv({ cls: "gtm-rail-title", text: "Timeline" });
-    head.createDiv({ cls: "gtm-rail-sub", text: "Only versions that changed this note" });
+    head.createDiv({ cls: "gtm-rail-sub", text: "Only versions that changed this file" });
     this.renderScrubber(el.createDiv({ cls: "gtm-scrubber" }), p);
 
     if (p.changes.length) {

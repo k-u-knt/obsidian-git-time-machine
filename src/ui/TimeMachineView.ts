@@ -1,13 +1,19 @@
-import { ItemView, Notice, debounce, setIcon, type TFile, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
-import { describeChunks } from "../diff/describe";
+import { ItemView, Notice, TFile, debounce, setIcon, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
+import { CanvasParseError, countStates, describeCanvasChanges, diffCanvas, parseCanvas, type CanvasDiff } from "../diff/canvasDiff";
+import { describeChunks, type ChangeSummary } from "../diff/describe";
 import { diffText, type Chunk, type TextDiff } from "../diff/textDiff";
 import type { Version } from "../history/types";
 import type GitTimeMachinePlugin from "../main";
 import type { RepoContext } from "../main";
+import { defaultRegionState } from "../region/RegionTool";
+import type { RestorePlan } from "../region/restorePlan";
+import { CanvasCompare, type CanvasViewState } from "../render/CanvasCompare";
 import { MarkdownCompare } from "../render/MarkdownCompare";
 import { fileKind, looksBinary } from "../render/registry";
 import { SourceCompare } from "../render/SourceCompare";
 import type { CompareRenderer } from "../render/types";
+import { canvasTextTarget } from "../restore/canvasTarget";
+import { applyCanvasPlan, formatCanvas, useCardText } from "../restore/canvasWriter";
 import { EditorSync } from "../restore/EditorSync";
 import { obsidianTextTarget } from "../restore/obsidianTarget";
 import { Restorer, StaleWriteError, type TextTarget } from "../restore/Restorer";
@@ -39,6 +45,10 @@ export class TimeMachineView extends ItemView {
   /** The note at the selected version. */
   private leftText = "";
   private diff: TextDiff | null = null;
+  /** Canvas mode only. */
+  private canvasDiff: CanvasDiff | null = null;
+  private canvasError = "";
+  private canvasState: CanvasViewState = freshCanvasState();
   private lastHead: string | null = null;
   private mode: Mode;
   private layout: Layout = "split";
@@ -148,7 +158,7 @@ export class TimeMachineView extends ItemView {
     this.ctx = res;
     if (!this.file()) return this.showMessage("File not found", path);
     if (fileKind(path) === "unsupported") {
-      return this.showMessage("Time Machine can't show this file type yet", "Notes and plain-text files work now. Canvases, drawings and attachments come in later versions.");
+      return this.showMessage("Time Machine can't show this file type yet", "Notes, canvases and plain-text files work now. Drawings and attachments come in later versions.");
     }
     const repoPath = res.paths.toRepo(path);
     if (!repoPath) return this.showMessage("This file is outside the Git repository", res.repoRoot);
@@ -181,6 +191,8 @@ export class TimeMachineView extends ItemView {
     this.versions = [];
     this.hasMore = false;
     this.diff = null;
+    this.canvasDiff = null;
+    this.canvasState = freshCanvasState();
     this.latestText = null;
     this.selectedKey = "now";
     this.allowLarge = false;
@@ -238,6 +250,8 @@ export class TimeMachineView extends ItemView {
     this.selectedKey = key;
     this.allowLarge = false;
     this.changeCursor = -1;
+    this.canvasState.region.selected = [];
+    this.canvasState.region.region = null;
     await this.renderAll();
   }
 
@@ -255,7 +269,8 @@ export class TimeMachineView extends ItemView {
     // A newer selection may have finished first; never let a late result replace what's on screen.
     if (token !== this.renderToken) return;
     this.leftText = left;
-    this.diff = this.computeDiff();
+    this.diff = this.canvasMode() ? null : this.computeDiff();
+    this.canvasDiff = this.kind() === "canvas" ? this.computeCanvasDiff() : null;
     this.renderHeader(entry);
     this.renderTimeline();
     await this.renderCompare(entry);
@@ -268,6 +283,17 @@ export class TimeMachineView extends ItemView {
     return !this.allowLarge && changed > LARGE_CHANGE_LINES ? null : diff;
   }
 
+  private computeCanvasDiff(): CanvasDiff | null {
+    try {
+      this.canvasError = "";
+      return diffCanvas(parseCanvas(this.leftText), parseCanvas(this.liveText));
+    } catch (e) {
+      if (!(e instanceof CanvasParseError)) throw e;
+      this.canvasError = e.message;
+      return null;
+    }
+  }
+
   private async renderCompare(entry: TimelineEntry): Promise<void> {
     this.flushEditorNow();
     this.renderer?.destroy();
@@ -275,6 +301,7 @@ export class TimeMachineView extends ItemView {
     const scroll = this.compareEl.scrollTop;
     this.compareEl.empty();
     this.timeline.el.toggle(true);
+    if (this.canvasMode()) return this.renderCanvas(entry);
     if (!this.diff) {
       const box = this.messageBox(this.compareEl, "This is a large change", "Drawing the full comparison may take a moment.");
       box.createEl("button", { cls: "mod-cta", text: "Show comparison" }).addEventListener("click", () => {
@@ -296,6 +323,7 @@ export class TimeMachineView extends ItemView {
           left: this.leftText,
           right: this.liveText,
           layout: this.layout,
+          chunks: () => this.diff?.chunks ?? [],
           onEdit: (text) => {
             if (!sync || this.sync !== sync) return;
             this.liveText = text;
@@ -323,7 +351,19 @@ export class TimeMachineView extends ItemView {
     title.createEl("h2", { text: this.file()?.basename ?? this.filePath ?? "" });
     const summary = title.createDiv({ cls: "gtm-summary" });
     const d = this.diff;
-    if (d && entry.version && !entry.isNow && d.chunks.length) {
+    const changes = this.changeSummaries();
+    const comparing = !!entry.version && !entry.isNow;
+    if (comparing && this.canvasMode() && this.canvasDiff && changes.length) {
+      const n = countStates(this.canvasDiff.nodes);
+      const e = countStates(this.canvasDiff.edges);
+      const parts = [
+        n.edited && `${n.edited} card${n.edited === 1 ? "" : "s"} edited`,
+        n.added && `${n.added} added`,
+        n.removed && `${n.removed} removed`,
+        e.edited + e.added + e.removed && `${e.edited + e.added + e.removed} connection${e.edited + e.added + e.removed === 1 ? "" : "s"} changed`,
+      ].filter(Boolean);
+      summary.setText(`${changes.length} change${changes.length === 1 ? "" : "s"} since ${this.when(entry)} · ${parts.join(" · ")}`);
+    } else if (comparing && d && d.chunks.length) {
       const added = d.chunks.reduce((n, c) => n + c.rightLines.length, 0);
       const removed = d.chunks.reduce((n, c) => n + c.leftLines.length, 0);
       summary.appendText(`${d.chunks.length} change${d.chunks.length === 1 ? "" : "s"} since ${this.when(entry)} · `);
@@ -333,17 +373,21 @@ export class TimeMachineView extends ItemView {
     } else summary.setText(entry.version ? `Comparing with ${this.when(entry)}` : "Pick an earlier time to compare");
 
     const controls = h.createDiv({ cls: "gtm-controls" });
-    if (fileKind(this.filePath ?? "") === "markdown") {
-      this.segmented(controls, "View", [["rendered", "Rendered"], ["source", "Source"]], this.mode, (v) => {
+    const kind = this.kind();
+    if (kind === "markdown" || kind === "canvas") {
+      const options: Array<[string, string]> = [["rendered", kind === "canvas" ? "Canvas" : "Rendered"], ["source", "Source"]];
+      this.segmented(controls, "View", options, this.mode, (v) => {
         this.mode = v as Mode;
+        void this.renderAll();
+      });
+    }
+    if (!this.canvasMode()) {
+      this.segmented(controls, "Layout", [["split", "Side by side"], ["inline", "Inline"]], this.layout, (v) => {
+        this.layout = v as Layout;
         void this.rerenderCompare();
       });
     }
-    this.segmented(controls, "Layout", [["split", "Side by side"], ["inline", "Inline"]], this.layout, (v) => {
-      this.layout = v as Layout;
-      void this.rerenderCompare();
-    });
-    const hasChanges = !!d && d.chunks.length > 0;
+    const hasChanges = changes.length > 0;
     this.iconButton(controls, "chevron-up", "Previous change", hasChanges, () => this.jumpRelative(-1));
     this.iconButton(controls, "chevron-down", "Next change", hasChanges, () => this.jumpRelative(1));
     const restore = controls.createEl("button", { cls: "gtm-restore-all", text: "Restore whole version…" });
@@ -355,7 +399,7 @@ export class TimeMachineView extends ItemView {
     this.timeline.render({
       model: this.model(),
       selectedKey: this.selectedKey,
-      changes: this.diff ? describeChunks(this.diff) : [],
+      changes: this.changeSummaries(),
       hasMore: this.hasMore,
       loadingMore: this.loadingMore,
     });
@@ -492,15 +536,14 @@ export class TimeMachineView extends ItemView {
 
   // ------------------------------------------------------------- navigation
 
-  private jumpTo(chunkIndex: number): void {
-    const chunk = this.diff?.chunks[chunkIndex];
-    if (!chunk || !this.renderer) return;
-    this.changeCursor = chunkIndex;
-    this.renderer.scrollToChunk(chunk);
+  private jumpTo(index: number): void {
+    if (!this.renderer || index < 0 || index >= this.changeSummaries().length) return;
+    this.changeCursor = index;
+    this.renderer.scrollToChange(index);
   }
 
   private jumpRelative(delta: number): void {
-    const n = this.diff?.chunks.length ?? 0;
+    const n = this.changeSummaries().length;
     if (!n) return;
     this.jumpTo((((this.changeCursor + delta) % n) + n) % n);
   }
@@ -521,6 +564,110 @@ export class TimeMachineView extends ItemView {
 
   // ---------------------------------------------------------------- helpers
 
+  private kind(): ReturnType<typeof fileKind> {
+    return fileKind(this.filePath ?? "");
+  }
+
+  /** A canvas shown as a canvas (not as Source text). */
+  private canvasMode(): boolean {
+    return this.kind() === "canvas" && this.mode === "rendered";
+  }
+
+  /** The "Changes in this version" list, for whichever comparison is showing. */
+  private changeSummaries(): ChangeSummary[] {
+    if (this.canvasMode()) {
+      return this.canvasDiff
+        ? describeCanvasChanges(this.canvasDiff).map((c, i) => ({ chunkIndex: i, kind: c.state, label: c.label }))
+        : [];
+    }
+    return this.diff ? describeChunks(this.diff) : [];
+  }
+
+  // ------------------------------------------------------------------ canvas
+
+  private async renderCanvas(entry: TimelineEntry): Promise<void> {
+    if (!this.canvasDiff) {
+      this.messageBox(this.compareEl, "This canvas can't be drawn", `${this.canvasError} Switch to Source to see its text.`);
+      return;
+    }
+    const moved = [...this.canvasDiff.nodes.values()].some((s) => s === "moved");
+    if (!this.changeSummaries().length && !moved) {
+      if (entry.version && !entry.isNow) this.messageBox(this.compareEl, "No differences", `Your canvas is the same as it was on ${this.when(entry)}.`);
+      else this.messageBox(this.compareEl, "This is your canvas as it is now", "Pick an earlier time on the right to compare.");
+      return;
+    }
+    this.renderer = new CanvasCompare({
+      app: this.app,
+      parent: this,
+      sourcePath: this.filePath ?? "",
+      diff: this.canvasDiff,
+      leftLabel: this.when(entry),
+      state: this.canvasState,
+      onUseText: (id) => void this.restoreCardText(id),
+      onRestorePlan: (plan, keep) => void this.restoreCanvasPlan(plan, keep),
+    });
+    await this.renderer.render(this.compareEl);
+  }
+
+  private async restoreCanvasPlan(plan: RestorePlan, keepPositions: boolean): Promise<void> {
+    const entry = this.selectedEntry();
+    const past = this.canvasDiff?.past;
+    if (!entry?.version || !past) return;
+    const expected = this.liveText;
+    let next: string;
+    try {
+      next = formatCanvas(applyCanvasPlan(parseCanvas(expected), past, plan, { keepPositions }));
+    } catch (e) {
+      new Notice(describeError(e));
+      return;
+    }
+    const restoredFiles: string[] = [];
+    for (const path of plan.extraFiles) if (await this.restoreDeletedFile(entry.version.hash, path)) restoredFiles.push(path);
+    const result = await this.restorer.replaceText(this.target(), expected, next);
+    if (result === "stale") new Notice("The canvas changed, so the comparison was refreshed. Try again.");
+    else {
+      this.canvasState.region.selected = [];
+      this.canvasState.region.region = null;
+      const extra = restoredFiles.length ? ` Also brought back ${restoredFiles.length} deleted file${restoredFiles.length === 1 ? "" : "s"}.` : "";
+      this.undoNotice(`Selection restored.${extra}`);
+    }
+    await this.refreshLive();
+  }
+
+  private async restoreCardText(id: string): Promise<void> {
+    const node = this.canvasDiff?.past.nodes.find((n) => n.id === id);
+    if (!node) return;
+    const expected = this.liveText;
+    let next: string;
+    try {
+      next = formatCanvas(useCardText(parseCanvas(expected), node));
+    } catch (e) {
+      new Notice(describeError(e));
+      return;
+    }
+    const result = await this.restorer.replaceText(this.target(), expected, next);
+    if (result === "stale") new Notice("The canvas changed, so the comparison was refreshed. Try again.");
+    else this.undoNotice("Card text restored.");
+    await this.refreshLive();
+  }
+
+  /** Brings back a vault file (e.g. a file card's note) as it was at `hash`. Never overwrites an existing file. */
+  private async restoreDeletedFile(hash: string, vaultPath: string): Promise<boolean> {
+    if (this.app.vault.getAbstractFileByPath(vaultPath) || !this.ctx) return false;
+    const repoPath = this.ctx.paths.toRepo(vaultPath);
+    if (!repoPath) return false;
+    try {
+      const bytes = await this.ctx.history.readAt(hash, repoPath);
+      const dir = vaultPath.split("/").slice(0, -1).join("/");
+      if (dir && !this.app.vault.getAbstractFileByPath(dir)) await this.app.vault.createFolder(dir);
+      await this.app.vault.createBinary(vaultPath, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
+      return true;
+    } catch (e) {
+      new Notice(`Couldn't bring back ${vaultPath}: ${describeError(e)}`);
+      return false;
+    }
+  }
+
   private model(): TimelineModel {
     return buildTimeline(this.versions, { now: new Date(), liveDiffersFromLatest: this.liveText !== this.latestText });
   }
@@ -536,7 +683,7 @@ export class TimeMachineView extends ItemView {
   private target(): TextTarget {
     const file = this.file();
     if (!file) throw new Error(`${this.filePath} no longer exists.`);
-    return obsidianTextTarget(this.app, file);
+    return this.kind() === "canvas" ? canvasTextTarget(this.app, file) : obsidianTextTarget(this.app, file);
   }
 
   private async textAt(v: Version): Promise<string> {
@@ -585,4 +732,8 @@ export class TimeMachineView extends ItemView {
     b.disabled = !enabled;
     b.addEventListener("click", onClick);
   }
+}
+
+function freshCanvasState(): CanvasViewState {
+  return { zoom: null, scrollLeft: 0, scrollTop: 0, showMoved: false, region: defaultRegionState() };
 }
