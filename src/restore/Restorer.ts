@@ -12,6 +12,10 @@ export class StaleWriteError extends Error {
 export interface TextTarget {
   readonly path: string;
   read(): Promise<string>;
+  /** Before a write: make the file hold what's on screen (e.g. save an open canvas). Plain reads never do this. */
+  flush?(): Promise<void>;
+  /** Whether two texts are the same file content (a canvas compares as data). Defaults to `===`. */
+  same?(a: string, b: string): boolean;
   /** Applies one replacement to text that must still equal `before`; otherwise throws StaleWriteError. */
   write(edit: { from: number; to: number; text: string }, before: string): Promise<void>;
 }
@@ -22,7 +26,8 @@ export interface UndoEntry {
   after: string;
 }
 
-export type ApplyResult = "applied" | "stale";
+/** "unchanged": the file already matches, nothing was written and nothing can be undone. */
+export type ApplyResult = "applied" | "stale" | "unchanged";
 
 /** The only code path that changes vault files. Keeps an in-memory undo stack (per Time Machine tab). */
 export class Restorer {
@@ -32,24 +37,28 @@ export class Restorer {
 
   /** `expectedCurrent` is the text the comparison was computed against; anything else is stale. */
   async applyChunk(target: TextTarget, expectedCurrent: string, chunk: Chunk): Promise<ApplyResult> {
+    await target.flush?.();
     const current = await target.read();
     if (current !== expectedCurrent) return "stale";
     const next = applyChunkToText(current, chunk);
     if (next === null) return "stale";
+    if (next === current) return "unchanged";
     return (await this.replace(target, current, next)) ? "applied" : "stale";
   }
 
   /** Writes `next` only if the file still equals `expectedCurrent` (the text the comparison was drawn from). */
   async replaceText(target: TextTarget, expectedCurrent: string, next: string): Promise<ApplyResult> {
+    await target.flush?.();
     const current = await target.read();
     if (current !== expectedCurrent) return "stale";
-    if (current === next) return "applied";
+    if (current === next) return "unchanged";
     return (await this.replace(target, current, next)) ? "applied" : "stale";
   }
 
   async restoreWhole(target: TextTarget, content: string): Promise<ApplyResult> {
+    await target.flush?.();
     const current = await target.read();
-    if (current === content) return "applied";
+    if (current === content) return "unchanged";
     return (await this.replace(target, current, content)) ? "applied" : "stale";
   }
 
@@ -61,8 +70,10 @@ export class Restorer {
   async undo(target: TextTarget, confirmOverwrite: () => Promise<boolean>): Promise<"undone" | "cancelled" | "empty"> {
     const entry = this.peekUndo();
     if (!entry) return "empty";
+    await target.flush?.();
     const current = await target.read();
-    if (current !== entry.after && !(await confirmOverwrite())) return "cancelled";
+    const untouched = current === entry.after || !!target.same?.(current, entry.after);
+    if (!untouched && !(await confirmOverwrite())) return "cancelled";
     this.stack.pop();
     await target.write(minimalEdit(current, entry.before), current);
     return "undone";

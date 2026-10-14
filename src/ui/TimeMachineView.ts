@@ -12,10 +12,9 @@ import { MarkdownCompare } from "../render/MarkdownCompare";
 import { fileKind, looksBinary } from "../render/registry";
 import { SourceCompare } from "../render/SourceCompare";
 import type { CompareRenderer } from "../render/types";
-import { canvasTextTarget } from "../restore/canvasTarget";
 import { applyCanvasPlan, formatCanvas, useCardText } from "../restore/canvasWriter";
 import { EditorSync } from "../restore/EditorSync";
-import { obsidianTextTarget } from "../restore/obsidianTarget";
+import { textTargetFor } from "../restore/targets";
 import { Restorer, StaleWriteError, type TextTarget } from "../restore/Restorer";
 import { confirmModal } from "./ConfirmModal";
 import { describeError, describeLocateError } from "./messages";
@@ -296,12 +295,14 @@ export class TimeMachineView extends ItemView {
 
   private async renderCompare(entry: TimelineEntry): Promise<void> {
     this.flushEditorNow();
+    this.timeline.el.toggle(true);
+    // A canvas redraw keeps the current screen until the new one is complete (no blank flash on each save).
+    if (this.canvasMode() && this.canvasDrawable()) return this.renderCanvas(entry);
     this.renderer?.destroy();
     this.renderer = null;
     const scroll = this.compareEl.scrollTop;
     this.compareEl.empty();
-    this.timeline.el.toggle(true);
-    if (this.canvasMode()) return this.renderCanvas(entry);
+    if (this.canvasMode()) return this.canvasMessage(entry);
     if (!this.diff) {
       const box = this.messageBox(this.compareEl, "This is a large change", "Drawing the full comparison may take a moment.");
       box.createEl("button", { cls: "mod-cta", text: "Show comparison" }).addEventListener("click", () => {
@@ -316,7 +317,7 @@ export class TimeMachineView extends ItemView {
       return;
     }
     const useSource = this.mode === "source" || fileKind(this.filePath ?? "") === "text";
-    if (useSource) this.sync = new EditorSync(this.target(), this.liveText);
+    if (useSource) this.sync = new EditorSync(this.target(), this.liveText, this.kind() === "canvas" ? canvasJsonProblem : undefined);
     const sync = this.sync;
     this.renderer = useSource
       ? new SourceCompare({
@@ -438,6 +439,7 @@ export class TimeMachineView extends ItemView {
   private async restoreChunk(chunk: Chunk): Promise<void> {
     const result = await this.restorer.applyChunk(this.target(), this.liveText, chunk);
     if (result === "stale") new Notice("The note changed, so the comparison was refreshed. Try again.");
+    else if (result === "unchanged") new Notice("Nothing to restore: your note already matches.");
     else this.undoNotice("Change restored.");
     await this.refreshLive();
   }
@@ -450,7 +452,7 @@ export class TimeMachineView extends ItemView {
     const left = this.leftText;
     const ok = await confirmModal(this.app, {
       title: "Restore this whole version?",
-      body: `Your note will be replaced with the version from ${this.when(entry)}. You can undo this from the notice or with the "Undo last restore" command.`,
+      body: `Your ${this.kind() === "canvas" ? "canvas" : "note"} will be replaced with the version from ${this.when(entry)}. You can undo this from the notice or with the "Undo last restore" command.`,
       warning: unsaved ? `Edits made since ${timeLabel(this.versions[0].time)} aren't in the Git history yet. After this restore, only Undo can bring them back.` : undefined,
       confirmText: "Restore",
     });
@@ -460,7 +462,8 @@ export class TimeMachineView extends ItemView {
       return;
     }
     const result = await this.restorer.restoreWhole(this.target(), left);
-    if (result === "stale") new Notice("The note changed while restoring, so nothing was changed. Try again.");
+    if (result === "stale") new Notice("The file changed while restoring, so nothing was changed. Try again.");
+    else if (result === "unchanged") new Notice("Nothing to restore: it already matches that version.");
     else this.undoNotice("Version restored.");
     await this.refreshLive();
   }
@@ -477,10 +480,10 @@ export class TimeMachineView extends ItemView {
       return;
     }
     try {
-      const result = await this.restorer.undo(obsidianTextTarget(this.app, file), () =>
+      const result = await this.restorer.undo(textTargetFor(this.app, file), () =>
         confirmModal(this.app, {
           title: "Undo the restore?",
-          body: "The note was edited after the restore. Undoing will also remove those later edits.",
+          body: `${file.name} was edited after the restore. Undoing will also remove those later edits.`,
           confirmText: "Undo anyway",
         }),
       );
@@ -495,7 +498,7 @@ export class TimeMachineView extends ItemView {
   private async flushEditor(): Promise<void> {
     const sync = this.sync;
     if (!sync) return;
-    let result: "written" | "stale" | "none";
+    let result: "written" | "stale" | "none" | "invalid";
     try {
       result = await sync.flush();
     } catch (e) {
@@ -522,7 +525,10 @@ export class TimeMachineView extends ItemView {
     if (!sync) return;
     sync
       .flush()
-      .then((r) => r === "stale" && new Notice("The note changed elsewhere, so your last edit in Time Machine wasn't saved."))
+      .then((r) => {
+        if (r === "stale") new Notice("The file changed elsewhere, so your last edit in Time Machine wasn't saved.");
+        if (r === "invalid") new Notice("Your last edit in Time Machine wasn't saved: it isn't valid canvas data.");
+      })
       .catch((e) => new Notice(describeError(e)));
   }
 
@@ -585,18 +591,22 @@ export class TimeMachineView extends ItemView {
 
   // ------------------------------------------------------------------ canvas
 
+  /** Something to draw: content changes, or cards that moved. */
+  private canvasDrawable(): boolean {
+    if (!this.canvasDiff) return false;
+    return this.changeSummaries().length > 0 || [...this.canvasDiff.nodes.values()].some((s) => s === "moved");
+  }
+
+  private canvasMessage(entry: TimelineEntry): void {
+    if (!this.canvasDiff) this.messageBox(this.compareEl, "This canvas can't be drawn", `${this.canvasError} Switch to Source to see its text.`);
+    else if (entry.version && !entry.isNow) this.messageBox(this.compareEl, "No differences", `Your canvas is the same as it was on ${this.when(entry)}.`);
+    else this.messageBox(this.compareEl, "This is your canvas as it is now", "Pick an earlier time on the right to compare.");
+  }
+
   private async renderCanvas(entry: TimelineEntry): Promise<void> {
-    if (!this.canvasDiff) {
-      this.messageBox(this.compareEl, "This canvas can't be drawn", `${this.canvasError} Switch to Source to see its text.`);
-      return;
-    }
-    const moved = [...this.canvasDiff.nodes.values()].some((s) => s === "moved");
-    if (!this.changeSummaries().length && !moved) {
-      if (entry.version && !entry.isNow) this.messageBox(this.compareEl, "No differences", `Your canvas is the same as it was on ${this.when(entry)}.`);
-      else this.messageBox(this.compareEl, "This is your canvas as it is now", "Pick an earlier time on the right to compare.");
-      return;
-    }
-    this.renderer = new CanvasCompare({
+    if (!this.canvasDiff) return;
+    const previous = this.renderer;
+    const next = new CanvasCompare({
       app: this.app,
       parent: this,
       sourcePath: this.filePath ?? "",
@@ -606,7 +616,9 @@ export class TimeMachineView extends ItemView {
       onUseText: (id) => void this.restoreCardText(id),
       onRestorePlan: (plan, keep) => void this.restoreCanvasPlan(plan, keep),
     });
-    await this.renderer.render(this.compareEl);
+    this.renderer = next;
+    await next.render(this.compareEl); // replaces what's on screen only once complete
+    previous?.destroy();
   }
 
   private async restoreCanvasPlan(plan: RestorePlan, keepPositions: boolean): Promise<void> {
@@ -625,6 +637,7 @@ export class TimeMachineView extends ItemView {
     for (const path of plan.extraFiles) if (await this.restoreDeletedFile(entry.version.hash, path)) restoredFiles.push(path);
     const result = await this.restorer.replaceText(this.target(), expected, next);
     if (result === "stale") new Notice("The canvas changed, so the comparison was refreshed. Try again.");
+    else if (result === "unchanged") new Notice("Nothing to restore: the canvas already matches.");
     else {
       this.canvasState.region.selected = [];
       this.canvasState.region.region = null;
@@ -647,6 +660,7 @@ export class TimeMachineView extends ItemView {
     }
     const result = await this.restorer.replaceText(this.target(), expected, next);
     if (result === "stale") new Notice("The canvas changed, so the comparison was refreshed. Try again.");
+    else if (result === "unchanged") new Notice("Nothing to restore: the card already has this text.");
     else this.undoNotice("Card text restored.");
     await this.refreshLive();
   }
@@ -683,7 +697,7 @@ export class TimeMachineView extends ItemView {
   private target(): TextTarget {
     const file = this.file();
     if (!file) throw new Error(`${this.filePath} no longer exists.`);
-    return this.kind() === "canvas" ? canvasTextTarget(this.app, file) : obsidianTextTarget(this.app, file);
+    return textTargetFor(this.app, file);
   }
 
   private async textAt(v: Version): Promise<string> {
@@ -736,4 +750,14 @@ export class TimeMachineView extends ItemView {
 
 function freshCanvasState(): CanvasViewState {
   return { zoom: null, scrollLeft: 0, scrollTop: 0, showMoved: false, region: defaultRegionState() };
+}
+
+/** Source mode on a canvas only saves text that is still a readable canvas. */
+function canvasJsonProblem(text: string): string | null {
+  try {
+    parseCanvas(text);
+    return null;
+  } catch (e) {
+    return (e as Error).message;
+  }
 }

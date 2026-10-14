@@ -77,6 +77,31 @@ describe("Restorer", () => {
     expect(t.text).toBe("{}");
   });
 
+  it("asks the target to flush unsaved on-screen changes before a write", async () => {
+    const r = new Restorer();
+    const t = Object.assign(memTarget(right), { flushes: 0, async flush() { t.flushes++; } });
+    await r.applyChunk(t, right, chunk);
+    expect(t.flushes).toBe(1);
+  });
+
+  it("reports 'unchanged' and keeps no undo entry when a restore would change nothing", async () => {
+    const r = new Restorer();
+    const t = memTarget(right);
+    expect(await r.replaceText(t, right, right)).toBe("unchanged");
+    expect(await r.restoreWhole(t, right)).toBe("unchanged");
+    expect(r.peekUndo()).toBeUndefined();
+    expect(t.writes).toBe(0);
+  });
+
+  it("uses the target's own idea of 'the same' when checking for edits before undo", async () => {
+    const r = new Restorer();
+    const t = Object.assign(memTarget('{"a":1}'), { same: (a: string, b: string) => a.replace(/\s/g, "") === b.replace(/\s/g, "") });
+    await r.restoreWhole(t, '{"a":2}');
+    t.text = '{ "a": 2 }';
+    expect(await r.undo(t, async () => false)).toBe("undone");
+    expect(t.text.replace(/\s/g, "")).toBe('{"a":1}');
+  });
+
   it("keeps at most `limit` undo entries", async () => {
     const r = new Restorer(2);
     const t = memTarget("0");

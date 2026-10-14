@@ -156,10 +156,17 @@ export function describeCanvasChanges(d: CanvasDiff): CanvasChange[] {
   return out;
 }
 
-/** True when two items are identical in every field (key order ignored). Region restore skips only these. */
-export function sameItem(a: Record<string, unknown> | undefined, b: Record<string, unknown> | undefined): boolean {
+/** Position and size of cards, and the sides connections attach to. */
+export const GEOMETRY_FIELDS = ["x", "y", "width", "height", "fromSide", "toSide"] as const;
+
+/**
+ * True when two items are identical in every field (key order ignored), apart from `ignore`.
+ * Region restore skips only these.
+ */
+export function sameItem(a: Record<string, unknown> | undefined, b: Record<string, unknown> | undefined, ignore: readonly string[] = []): boolean {
   if (!a || !b) return false;
-  return JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+  const strip = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([k]) => !ignore.includes(k)));
+  return JSON.stringify(canonical(strip(a))) === JSON.stringify(canonical(strip(b)));
 }
 
 function canonical(v: unknown): unknown {

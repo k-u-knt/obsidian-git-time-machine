@@ -1,5 +1,5 @@
 import { Component, MarkdownRenderer, setIcon, TFile, type App } from "obsidian";
-import { describeCanvasChanges, nodeTitle, sameItem, type CanvasData, type CanvasDiff, type CanvasEdge, type CanvasNode, type ItemState } from "../diff/canvasDiff";
+import { describeCanvasChanges, GEOMETRY_FIELDS, nodeTitle, sameItem, type CanvasData, type CanvasDiff, type CanvasEdge, type CanvasNode, type ItemState } from "../diff/canvasDiff";
 import { canvasAdapter } from "../region/canvasAdapter";
 import { RegionTool, type RegionState, type Tool } from "../region/RegionTool";
 import type { RestorePlan } from "../region/restorePlan";
@@ -40,6 +40,8 @@ interface Side {
   stage: HTMLElement;
   overlay: SVGSVGElement;
   nodeEls: Map<string, HTMLElement>;
+  /** The position we last set programmatically (see syncScroll). */
+  expected: { left: number; top: number } | null;
 }
 
 /** Both canvases drawn in one coordinate system, with cards marked by what changed in their content. */
@@ -55,6 +57,8 @@ export class CanvasCompare implements CompareRenderer {
   private tool: RegionTool | null = null;
   private toolButtons = new Map<Tool, HTMLElement>();
   private destroyed = false;
+  /** True once the finished drawing has replaced the host's content. */
+  private mounted = false;
 
   constructor(private readonly o: CanvasCompareOptions) {
     o.parent.addChild(this.component);
@@ -63,7 +67,10 @@ export class CanvasCompare implements CompareRenderer {
   async render(host: HTMLElement): Promise<void> {
     const { diff, state } = this.o;
     this.measure([...diff.past.nodes, ...diff.current.nodes]);
-    const root = host.createDiv({ cls: "gtm-canvas-compare", attr: { tabindex: "-1" } });
+    // Drawn off-screen and swapped in when complete, so a redraw (after each canvas save) never flashes blank.
+    const root = host.ownerDocument.createElement("div");
+    root.addClass("gtm-canvas-compare");
+    root.setAttr("tabindex", "-1");
     this.root = root;
     root.addEventListener("keydown", (ev) => {
       if (ev.key === "Escape") this.tool?.clear();
@@ -108,16 +115,18 @@ export class CanvasCompare implements CompareRenderer {
     await this.drawSide(this.right, "right");
     if (this.destroyed) return;
 
-    if (state.zoom === null) state.zoom = this.fitZoom();
+    host.empty();
+    host.appendChild(root);
+    this.mounted = true;
+    if (state.zoom === null) state.zoom = this.fitZoom(host);
     this.applyZoom();
-    this.left.scroll.scrollLeft = this.right.scroll.scrollLeft = state.scrollLeft;
-    this.left.scroll.scrollTop = this.right.scroll.scrollTop = state.scrollTop;
+    this.scrollBoth(state.scrollLeft, state.scrollTop);
     this.syncScroll();
 
     const pastNodes = new Map(diff.past.nodes.map((n) => [n.id, n]));
     const pastItems = new Map<string, Record<string, unknown>>([...diff.past.nodes, ...diff.past.edges].map((x) => [x.id, x]));
     const currentItems = new Map<string, Record<string, unknown>>([...diff.current.nodes, ...diff.current.edges].map((x) => [x.id, x]));
-    const unchanged = (id: string) => sameItem(pastItems.get(id), currentItems.get(id));
+    const unchanged = (id: string, ignoreGeometry: boolean) => sameItem(pastItems.get(id), currentItems.get(id), ignoreGeometry ? GEOMETRY_FIELDS : []);
     this.tool = new RegionTool({
       past: canvasAdapter(diff.past),
       current: canvasAdapter(diff.current),
@@ -150,11 +159,7 @@ export class CanvasCompare implements CompareRenderer {
     if (!el) return;
     const z = this.o.state.zoom ?? 1;
     const sc = this.left.scroll;
-    sc.scrollTo({
-      left: el.offsetLeft * z - sc.clientWidth / 2 + (el.offsetWidth * z) / 2,
-      top: el.offsetTop * z - sc.clientHeight / 2 + (el.offsetHeight * z) / 2,
-      behavior: "smooth",
-    });
+    this.scrollBoth(el.offsetLeft * z - sc.clientWidth / 2 + (el.offsetWidth * z) / 2, el.offsetTop * z - sc.clientHeight / 2 + (el.offsetHeight * z) / 2);
     for (const side of [this.left, this.right]) {
       const target = side.nodeEls.get(nodeId ?? "");
       target?.addClass("is-flash");
@@ -164,8 +169,11 @@ export class CanvasCompare implements CompareRenderer {
 
   destroy(): void {
     this.destroyed = true;
-    this.o.state.scrollLeft = this.left?.scroll.scrollLeft ?? this.o.state.scrollLeft;
-    this.o.state.scrollTop = this.left?.scroll.scrollTop ?? this.o.state.scrollTop;
+    // A drawing that never made it on screen has no scroll position worth keeping.
+    if (this.mounted) {
+      this.o.state.scrollLeft = this.left.scroll.scrollLeft;
+      this.o.state.scrollTop = this.left.scroll.scrollTop;
+    }
     this.o.parent.removeChild(this.component);
   }
 
@@ -187,8 +195,8 @@ export class CanvasCompare implements CompareRenderer {
     this.height = maxY - minY + 2 * PAD;
   }
 
-  private fitZoom(): number {
-    const w = this.left.scroll.clientWidth || 600;
+  private fitZoom(host?: HTMLElement): number {
+    const w = this.left.scroll.clientWidth || (host ? host.clientWidth / 2 : 0) || 600;
     return Math.max(0.05, Math.min(1, (w - 16) / this.width));
   }
 
@@ -209,17 +217,34 @@ export class CanvasCompare implements CompareRenderer {
     }
   }
 
+  /** Puts both panes at the same position and remembers it, so their scroll events aren't echoed back. */
+  private scrollBoth(left: number, top: number): void {
+    for (const side of [this.left, this.right]) {
+      side.scroll.scrollLeft = left;
+      side.scroll.scrollTop = top;
+      side.expected = { left: side.scroll.scrollLeft, top: side.scroll.scrollTop };
+    }
+    this.o.state.scrollLeft = left;
+    this.o.state.scrollTop = top;
+  }
+
+  /**
+   * Scrolling one pane scrolls the other. Each pane remembers the position we set on it, and a scroll event
+   * at exactly that position is our own echo, not the user: ignoring it stops the panes fighting.
+   */
   private syncScroll(): void {
-    let syncing = false;
     const link = (from: Side, to: Side) =>
       from.scroll.addEventListener("scroll", () => {
-        if (syncing) return;
-        syncing = true;
-        to.scroll.scrollLeft = from.scroll.scrollLeft;
-        to.scroll.scrollTop = from.scroll.scrollTop;
-        this.o.state.scrollLeft = from.scroll.scrollLeft;
-        this.o.state.scrollTop = from.scroll.scrollTop;
-        window.requestAnimationFrame(() => (syncing = false));
+        const left = from.scroll.scrollLeft;
+        const top = from.scroll.scrollTop;
+        const echo = from.expected;
+        if (echo && Math.abs(echo.left - left) < 1 && Math.abs(echo.top - top) < 1) return;
+        from.expected = null;
+        to.scroll.scrollLeft = left;
+        to.scroll.scrollTop = top;
+        to.expected = { left: to.scroll.scrollLeft, top: to.scroll.scrollTop };
+        this.o.state.scrollLeft = left;
+        this.o.state.scrollTop = top;
       });
     link(this.left, this.right);
     link(this.right, this.left);
@@ -250,7 +275,7 @@ export class CanvasCompare implements CompareRenderer {
       cls: "gtm-canvas-overlay",
       attr: { width: this.width, height: this.height, viewBox: `${this.minX} ${this.minY} ${this.width} ${this.height}` },
     });
-    return { data, scroll, world, stage, overlay, nodeEls: new Map() };
+    return { data, scroll, world, stage, overlay, nodeEls: new Map(), expected: null };
   }
 
   private async drawSide(side: Side, which: "left" | "right"): Promise<void> {
@@ -288,7 +313,7 @@ export class CanvasCompare implements CompareRenderer {
     }
     if (n.type === "group") {
       el.createDiv({ cls: "gtm-cnode-label", text: n.label ?? "" });
-      if (which === "left" && state === "removed") this.cardButton(el, "Restore group", () => this.restoreOnly(n.id));
+      if (which === "left" && state === "removed") this.cardButton(el, "Restore group…", () => this.previewRestore(n.id));
       return el;
     }
     el.createDiv({ cls: "gtm-cnode-title", text: nodeTitle(n) });
@@ -313,8 +338,10 @@ export class CanvasCompare implements CompareRenderer {
     } else if (n.type === "link" && n.url) {
       body.createDiv({ cls: "gtm-cnode-file", text: n.url });
     }
-    if (which === "left" && state === "edited" && n.type === "text") this.cardButton(el, "Use this text", () => this.o.onUseText(n.id));
-    if (which === "left" && state === "removed") this.cardButton(el, "Restore card", () => this.restoreOnly(n.id));
+    if (which === "left" && state === "edited" && n.type === "text" && other?.type === "text" && other.text !== n.text) {
+      this.cardButton(el, "Use this text", () => this.o.onUseText(n.id));
+    }
+    if (which === "left" && state === "removed") this.cardButton(el, "Restore card…", () => this.previewRestore(n.id));
     return el;
   }
 
@@ -345,9 +372,10 @@ export class CanvasCompare implements CompareRenderer {
     });
   }
 
-  private restoreOnly(id: string): void {
-    const plan = this.tool?.selectOnly(id);
-    if (plan) this.o.onRestorePlan(plan, false);
+  /** Selects the item (and what it brings) so the summary bar shows exactly what restoring it would do. */
+  private previewRestore(id: string): void {
+    this.tool?.selectOnly(id);
+    this.root.querySelector(".gtm-region-bar")?.scrollIntoView({ block: "nearest" });
   }
 
   /** Marks the selection on the left and shows where restored items will land on the right. */

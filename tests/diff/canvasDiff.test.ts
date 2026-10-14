@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CanvasParseError, countStates, describeCanvasChanges, diffCanvas, nodeTitle, parseCanvas, sameItem, type CanvasData } from "../../src/diff/canvasDiff";
+import { CanvasParseError, countStates, describeCanvasChanges, diffCanvas, nodeTitle, parseCanvas, sameItem, GEOMETRY_FIELDS, type CanvasData } from "../../src/diff/canvasDiff";
 
 const node = (id: string, extra: Record<string, unknown> = {}) => ({ id, type: "text", x: 0, y: 0, width: 200, height: 100, text: id, ...extra });
 const edge = (id: string, fromNode: string, toNode: string, extra: Record<string, unknown> = {}) => ({ id, fromNode, toNode, ...extra });
@@ -64,5 +64,10 @@ describe("sameItem", () => {
     expect(sameItem({ id: "a", x: 1, text: "t" }, { text: "t", id: "a", x: 1 })).toBe(true);
     expect(sameItem({ id: "a", styleAttributes: {} }, { id: "a", styleAttributes: { border: "dashed" } })).toBe(false);
     expect(sameItem({ id: "a" }, undefined)).toBe(false);
+  });
+
+  it("can ignore position and size (for 'Keep current positions')", () => {
+    expect(sameItem({ id: "a", x: 0, text: "t" }, { id: "a", x: 500, text: "t" }, GEOMETRY_FIELDS)).toBe(true);
+    expect(sameItem({ id: "a", x: 0, text: "t" }, { id: "a", x: 500, text: "u" }, GEOMETRY_FIELDS)).toBe(false);
   });
 });

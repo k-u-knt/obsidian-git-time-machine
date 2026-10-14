@@ -27,7 +27,8 @@ export interface RegionToolOptions {
   toScene(ev: PointerEvent): Point;
   state: RegionState;
   bar: HTMLElement;
-  unchanged(id: string): boolean;
+  /** True when the item needs no restore; `ignoreGeometry` when "Keep current positions" is on. */
+  unchanged(id: string, ignoreGeometry: boolean): boolean;
   fileExists(path: string): boolean;
   title(id: string): string;
   /** Called whenever the selection or plan changes, so the sides can highlight items and draw ghosts. */
@@ -139,7 +140,7 @@ export class RegionTool {
         past: this.o.past,
         current: this.o.current,
         selected: s.selected,
-        unchanged: this.o.unchanged,
+        unchanged: (id) => this.o.unchanged(id, s.keepPositions),
         currentInRegion,
         removeAdded: s.removeAdded,
         fileExists: this.o.fileExists,

@@ -30,17 +30,26 @@ function setup(opts: { reloads: boolean; onScreen?: string }) {
 }
 
 describe("canvasTextTarget", () => {
-  it("asks an open canvas with unsaved changes to save before reading", async () => {
+  it("doesn't save an open canvas just to read it (opening Time Machine never rewrites the file)", async () => {
+    const { target, view, vault } = setup({ reloads: true, onScreen: '{"nodes":[{"id":"x"}],"edges":[]}' });
+    expect(await target.read()).toBe('{"nodes":[],"edges":[]}');
+    expect(view.saves).toBe(0);
+    expect(vault.writes).toBe(0);
+  });
+
+  it("saves an open canvas with unsaved changes when asked to flush before a write", async () => {
     const { target, view } = setup({ reloads: true, onScreen: '{"nodes":[{"id":"x"}],"edges":[]}' });
+    await target.flush!();
+    expect(view.saves).toBe(1);
     expect(await target.read()).toBe('{"nodes":[{"id":"x"}],"edges":[]}');
+    await target.flush!();
     expect(view.saves).toBe(1);
   });
 
-  it("doesn't save an open canvas that has nothing new (no save → modify → refresh loop)", async () => {
-    const { target, view } = setup({ reloads: true });
-    await target.read();
-    await target.read();
-    expect(view.saves).toBe(0);
+  it("compares canvases as data, not as text", () => {
+    const { target } = setup({ reloads: true });
+    expect(target.same!('{"nodes":[{"id":"a","x":1}]}', '{\n\t"nodes":[\n\t\t{"x":1,"id":"a"}\n\t]\n}')).toBe(true);
+    expect(target.same!('{"nodes":[]}', '{"nodes":[{"id":"a"}]}')).toBe(false);
   });
 
   it("reopens a canvas view that didn't pick up the restore", async () => {
