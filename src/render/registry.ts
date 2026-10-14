@@ -1,4 +1,4 @@
-export type FileKind = "markdown" | "text" | "unsupported";
+export type FileKind = "markdown" | "canvas" | "text" | "unsupported";
 
 /** Plain-text formats compared in Source mode only. */
 const TEXT_EXTENSIONS = new Set([
@@ -6,7 +6,7 @@ const TEXT_EXTENSIONS = new Set([
   "csv", "tsv", "yaml", "yml", "toml", "ini", "py", "r", "sh", "tex", "bib",
 ]);
 
-/** Canvas, Excalidraw and attachments arrive in later milestones. */
+/** Excalidraw and attachments arrive in later milestones. */
 export function fileKind(path: string): FileKind {
   const lower = path.toLowerCase();
   if (lower.endsWith(".excalidraw.md")) return "unsupported";
@@ -14,6 +14,7 @@ export function fileKind(path: string): FileKind {
   if (dot === -1 || dot < lower.lastIndexOf("/")) return "unsupported";
   const ext = lower.slice(dot + 1);
   if (ext === "md") return "markdown";
+  if (ext === "canvas") return "canvas";
   return TEXT_EXTENSIONS.has(ext) ? "text" : "unsupported";
 }
 
