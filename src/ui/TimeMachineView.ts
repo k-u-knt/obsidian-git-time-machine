@@ -375,6 +375,7 @@ export class TimeMachineView extends ItemView {
         n.edited && `${n.edited} card${n.edited === 1 ? "" : "s"} edited`,
         n.added && `${n.added} added`,
         n.removed && `${n.removed} removed`,
+        n.moved && `${n.moved} moved or resized`,
         e.edited + e.added + e.removed && `${e.edited + e.added + e.removed} connection${e.edited + e.added + e.removed === 1 ? "" : "s"} changed`,
       ].filter(Boolean);
       summary.setText(`${changes.length} change${changes.length === 1 ? "" : "s"} since ${this.when(entry)} · ${parts.join(" · ")}`);
@@ -605,10 +606,9 @@ export class TimeMachineView extends ItemView {
 
   // ------------------------------------------------------------------ canvas
 
-  /** Something to draw: content changes, or cards that moved. */
+  /** Something to draw: any change, including cards moved relative to the anchor. */
   private canvasDrawable(): boolean {
-    if (!this.canvasDiff) return false;
-    return this.changeSummaries().length > 0 || [...this.canvasDiff.nodes.values()].some((s) => s === "moved");
+    return !!this.canvasDiff && this.changeSummaries().length > 0;
   }
 
   private canvasMessage(entry: TimelineEntry): void {
@@ -642,7 +642,7 @@ export class TimeMachineView extends ItemView {
     const expected = this.liveText;
     let next: string;
     try {
-      next = formatCanvas(applyCanvasPlan(parseCanvas(expected), past, plan, { keepPositions }));
+      next = formatCanvas(applyCanvasPlan(parseCanvas(expected), past, plan, { keepPositions, offset: this.canvasDiff!.anchor }));
     } catch (e) {
       new Notice(describeError(e));
       return;
@@ -763,7 +763,7 @@ export class TimeMachineView extends ItemView {
 }
 
 function freshCanvasState(): CanvasViewState {
-  return { zoom: null, scrollLeft: 0, scrollTop: 0, showMoved: false, region: defaultRegionState() };
+  return { zoom: null, scrollLeft: 0, scrollTop: 0, region: defaultRegionState() };
 }
 
 /** Source mode on a canvas only saves text that is still a readable canvas. */

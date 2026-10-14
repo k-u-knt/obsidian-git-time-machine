@@ -35,6 +35,12 @@ describe("applyCanvasPlan", () => {
     expect(applyCanvasPlan(current, past, plan({ replace: ["b"] }), { keepPositions: true }).nodes[2]).toEqual(n("b", 500, { text: "old b" }));
   });
 
+  it("puts restored cards back relative to the anchor when the canvas has shifted since", () => {
+    const out = applyCanvasPlan(current, past, plan({ replace: ["b"], add: ["gone"] }), { keepPositions: false, offset: { dx: 30, dy: -20 } });
+    expect(out.nodes.find((x) => x.id === "b")).toMatchObject({ x: 30, y: -20, text: "old b" });
+    expect(out.nodes.find((x) => x.id === "gone")).toMatchObject({ x: 40, y: -20 });
+  });
+
   it("removes cards and their connections", () => {
     const out = applyCanvasPlan(current, past, plan({ remove: ["new"] }), { keepPositions: false });
     expect(out.nodes.map((x) => x.id)).toEqual(["bg", "a", "b"]);

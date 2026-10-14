@@ -1,7 +1,8 @@
 import { Component, MarkdownRenderer, setIcon, TFile, type App } from "obsidian";
-import { describeCanvasChanges, GEOMETRY_FIELDS, nodeTitle, sameItem, type CanvasData, type CanvasDiff, type CanvasEdge, type CanvasNode, type ItemState } from "../diff/canvasDiff";
+import { describeCanvasChanges, GEOMETRY_FIELDS, nodeTitle, sameItem, shiftNode, type CanvasData, type CanvasDiff, type CanvasEdge, type CanvasNode, type ItemState } from "../diff/canvasDiff";
 import { canvasAdapter } from "../region/canvasAdapter";
 import { RegionTool, type RegionState, type Tool } from "../region/RegionTool";
+import { shiftRegion } from "../region/geometry";
 import type { RestorePlan } from "../region/restorePlan";
 import { markWords } from "./markdownBlocks";
 import type { CompareRenderer } from "./types";
@@ -11,7 +12,6 @@ export interface CanvasViewState {
   zoom: number | null;
   scrollLeft: number;
   scrollTop: number;
-  showMoved: boolean;
   region: RegionState;
 }
 
@@ -94,16 +94,6 @@ export class CanvasCompare implements CompareRenderer {
     this.iconButton(zoom, "zoom-out", "Zoom out", () => this.setZoom((state.zoom ?? 1) / 1.25));
     zoom.createEl("button", { text: "Fit" }).addEventListener("click", () => this.setZoom(this.fitZoom()));
     this.iconButton(zoom, "zoom-in", "Zoom in", () => this.setZoom((state.zoom ?? 1) * 1.25));
-    const moved = [...diff.nodes.values()].filter((s) => s === "moved").length;
-    const label = toolbar.createEl("label", { cls: "gtm-canvas-moved" });
-    const box = label.createEl("input", { attr: { type: "checkbox" } });
-    box.checked = state.showMoved;
-    label.appendText(`Show cards that only moved (${moved})`);
-    box.addEventListener("change", () => {
-      state.showMoved = box.checked;
-      root.toggleClass("show-moved", box.checked);
-    });
-    root.toggleClass("show-moved", state.showMoved);
 
     const panes = root.createDiv({ cls: "gtm-canvas-panes" });
     this.left = this.side(panes, diff.past, "left", this.o.leftLabel, "read-only", "lock");
@@ -126,7 +116,12 @@ export class CanvasCompare implements CompareRenderer {
     const pastNodes = new Map(diff.past.nodes.map((n) => [n.id, n]));
     const pastItems = new Map<string, Record<string, unknown>>([...diff.past.nodes, ...diff.past.edges].map((x) => [x.id, x]));
     const currentItems = new Map<string, Record<string, unknown>>([...diff.current.nodes, ...diff.current.edges].map((x) => [x.id, x]));
-    const unchanged = (id: string, ignoreGeometry: boolean) => sameItem(pastItems.get(id), currentItems.get(id), ignoreGeometry ? GEOMETRY_FIELDS : []);
+    // A past card counts as unchanged if it matches today's card once shifted by the anchor.
+    const pastShifted = (id: string) => {
+      const p = pastNodes.get(id);
+      return p ? shiftNode(p, diff.anchor) : pastItems.get(id);
+    };
+    const unchanged = (id: string, ignoreGeometry: boolean) => sameItem(pastShifted(id), currentItems.get(id), ignoreGeometry ? GEOMETRY_FIELDS : []);
     this.tool = new RegionTool({
       past: canvasAdapter(diff.past),
       current: canvasAdapter(diff.current),
@@ -139,6 +134,7 @@ export class CanvasCompare implements CompareRenderer {
       },
       state: state.region,
       bar,
+      regionToCurrent: (r) => shiftRegion(r, diff.anchor),
       unchanged,
       fileExists: (p) => this.o.app.vault.getAbstractFileByPath(p) instanceof TFile,
       title: (id) => {
@@ -308,9 +304,7 @@ export class CanvasCompare implements CompareRenderer {
     el.style.width = `${n.width}px`;
     el.style.height = `${n.height}px`;
     if (n.color) el.style.setProperty("--gtm-node-color", /^\d$/.test(n.color) ? `rgb(var(--canvas-color-${n.color}))` : n.color);
-    if (state === "edited" || state === "added" || state === "removed") {
-      el.createDiv({ cls: "gtm-cnode-tag", text: state === "edited" ? "Edited" : state === "added" ? "Added" : "Removed" });
-    }
+    if (state !== "same") el.createDiv({ cls: "gtm-cnode-tag", text: this.tagFor(n.id, state) });
     if (n.type === "group") {
       el.createDiv({ cls: "gtm-cnode-label", text: n.label ?? "" });
       if (which === "left" && state === "removed") this.cardButton(el, "Restore group…", () => this.previewRestore(n.id));
@@ -365,6 +359,14 @@ export class CanvasCompare implements CompareRenderer {
     }
   }
 
+  private tagFor(id: string, state: ItemState): string {
+    if (state === "edited") return "Edited";
+    if (state === "added") return "Added";
+    if (state === "removed") return "Removed";
+    const g = this.o.diff.geometry.get(id);
+    return g?.moved && g.resized ? "Moved · resized" : g?.resized ? "Resized" : "Moved";
+  }
+
   private cardButton(el: HTMLElement, text: string, onClick: () => void): void {
     const b = el.createEl("button", { cls: "gtm-cnode-action", text });
     b.addEventListener("click", (ev) => {
@@ -393,7 +395,7 @@ export class CanvasCompare implements CompareRenderer {
       const p = past.get(id);
       if (!p) continue;
       const c = current.get(id);
-      const box = this.o.state.region.keepPositions && c ? c : p;
+      const box = this.o.state.region.keepPositions && c ? c : shiftNode(p, this.o.diff.anchor);
       svg.createSvg("rect", { cls: "gtm-ghost", attr: { x: box.x, y: box.y, width: box.width, height: box.height, rx: 8 } });
     }
   }

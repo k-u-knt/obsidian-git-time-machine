@@ -34,6 +34,8 @@ export interface RegionToolOptions {
   /** Called whenever the selection or plan changes, so the sides can highlight items and draw ghosts. */
   onChange(selected: string[], plan: RestorePlan | null): void;
   onRestore(plan: RestorePlan, keepPositions: boolean): void;
+  /** Maps a region drawn on the past side into today's coordinates (the canvas may have shifted). */
+  regionToCurrent?(r: Region): Region;
 }
 
 /** Click / rectangle / lasso selection on the past side, the summary bar, and the restore button. */
@@ -135,7 +137,8 @@ export class RegionTool {
     const s = this.o.state;
     if (!s.selected.length) this.plan = null;
     else {
-      const currentInRegion = s.region ? itemsInRegion(this.o.current, s.region, s.mode) : [];
+      const currentRegion = s.region && this.o.regionToCurrent ? this.o.regionToCurrent(s.region) : s.region;
+      const currentInRegion = currentRegion ? itemsInRegion(this.o.current, currentRegion, s.mode) : [];
       this.plan = planRestore({
         past: this.o.past,
         current: this.o.current,

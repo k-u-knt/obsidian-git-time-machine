@@ -15,6 +15,13 @@ export interface Box {
 export type Region = { kind: "rect"; box: Box } | { kind: "lasso"; points: Point[] };
 export type HitMode = "inside" | "touching";
 
+/** The same region moved by (dx, dy), e.g. into today's coordinates when the canvas has shifted. */
+export function shiftRegion(r: Region, by: { dx: number; dy: number }): Region {
+  return r.kind === "rect"
+    ? { kind: "rect", box: { ...r.box, x: r.box.x + by.dx, y: r.box.y + by.dy } }
+    : { kind: "lasso", points: r.points.map((p) => ({ x: p.x + by.dx, y: p.y + by.dy })) };
+}
+
 export function rectFromPoints(a: Point, b: Point): Box {
   return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) };
 }

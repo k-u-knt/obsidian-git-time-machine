@@ -34,22 +34,41 @@ export interface CanvasData {
   [key: string]: unknown;
 }
 
-/** "moved" = only position or size changed, which is not a change for the user. */
+/**
+ * Cards: "moved" = same content, but moved relative to the anchor or resized (a change).
+ * Connections: "moved" = only the sides it attaches to changed (not a change).
+ */
 export type ItemState = "same" | "moved" | "edited" | "added" | "removed";
+
+/**
+ * The shift most unchanged cards share between the two versions (one of those cards is named as the anchor).
+ * Moving the whole canvas therefore isn't a change; a card that moved differently is.
+ */
+export interface Anchor {
+  id: string | null;
+  dx: number;
+  dy: number;
+}
 
 export interface CanvasDiff {
   past: CanvasData;
   current: CanvasData;
   nodes: Map<string, ItemState>;
   edges: Map<string, ItemState>;
+  anchor: Anchor;
+  /** For cards present in both versions: moved relative to the anchor, resized. */
+  geometry: Map<string, { moved: boolean; resized: boolean }>;
 }
 
 export interface CanvasChange {
   id: string;
   kind: "node" | "edge";
-  state: "edited" | "added" | "removed";
+  state: "edited" | "added" | "removed" | "moved";
   label: string;
 }
+
+/** Less than this (canvas units) is not a move. */
+const TOLERANCE = 0.5;
 
 export class CanvasParseError extends Error {
   constructor(message: string) {
@@ -102,12 +121,43 @@ function compare<T extends { id: string } & Record<string, unknown>>(
 }
 
 export function diffCanvas(past: CanvasData, current: CanvasData): CanvasDiff {
-  return {
-    past,
-    current,
-    nodes: compare(past.nodes, current.nodes, NODE_CONTENT, NODE_GEOMETRY),
-    edges: compare(past.edges, current.edges, EDGE_CONTENT, EDGE_GEOMETRY),
-  };
+  const anchor = findAnchor(past, current);
+  const nodes = compare(past.nodes, current.nodes, NODE_CONTENT, NODE_GEOMETRY);
+  const geometry = new Map<string, { moved: boolean; resized: boolean }>();
+  const pastById = new Map(past.nodes.map((n) => [n.id, n]));
+  for (const c of current.nodes) {
+    const p = pastById.get(c.id);
+    if (!p) continue;
+    const moved = Math.abs(c.x - p.x - anchor.dx) > TOLERANCE || Math.abs(c.y - p.y - anchor.dy) > TOLERANCE;
+    const resized = Math.abs(c.width - p.width) > TOLERANCE || Math.abs(c.height - p.height) > TOLERANCE;
+    geometry.set(c.id, { moved, resized });
+    if (nodes.get(c.id) !== "edited") nodes.set(c.id, moved || resized ? "moved" : "same");
+  }
+  return { past, current, nodes, edges: compare(past.edges, current.edges, EDGE_CONTENT, EDGE_GEOMETRY), anchor, geometry };
+}
+
+/** The shift shared by the most cards whose content and size didn't change; ties go to the earliest card. */
+export function findAnchor(past: CanvasData, current: CanvasData): Anchor {
+  const pastById = new Map(past.nodes.map((n) => [n.id, n]));
+  const groups = new Map<string, { id: string; dx: number; dy: number; count: number }>();
+  for (const c of current.nodes) {
+    const p = pastById.get(c.id);
+    if (!p || differs(p, c, NODE_CONTENT) || p.width !== c.width || p.height !== c.height) continue;
+    const dx = c.x - p.x;
+    const dy = c.y - p.y;
+    const key = `${dx},${dy}`;
+    const g = groups.get(key) ?? { id: c.id, dx, dy, count: 0 };
+    g.count++;
+    groups.set(key, g);
+  }
+  let best: { id: string; dx: number; dy: number; count: number } | null = null;
+  for (const g of groups.values()) if (!best || g.count > best.count) best = g;
+  return best ? { id: best.id, dx: best.dx, dy: best.dy } : { id: null, dx: 0, dy: 0 };
+}
+
+/** A past card placed where it would be now, given the anchor's shift. */
+export function shiftNode<T extends CanvasNode>(n: T, anchor: Pick<Anchor, "dx" | "dy">): T {
+  return { ...n, x: n.x + anchor.dx, y: n.y + anchor.dy };
 }
 
 export function countStates(states: Map<string, ItemState>): Record<ItemState, number> {
@@ -135,10 +185,15 @@ export function describeCanvasChanges(d: CanvasDiff): CanvasChange[] {
   const order = [...d.current.nodes.map((n) => n.id), ...d.past.nodes.filter((n) => !currentNodes.has(n.id)).map((n) => n.id)];
   for (const id of order) {
     const state = d.nodes.get(id);
-    if (state !== "edited" && state !== "added" && state !== "removed") continue;
+    if (state !== "edited" && state !== "added" && state !== "removed" && state !== "moved") continue;
     const node = currentNodes.get(id) ?? pastNodes.get(id)!;
     const what = node.type === "group" ? "group" : "card";
-    out.push({ id, kind: "node", state, label: `${nodeTitle(node)} · ${what} ${state}` });
+    let verb: string = state;
+    if (state === "moved") {
+      const g = d.geometry.get(id);
+      verb = g?.moved && g.resized ? "moved and resized" : g?.resized ? "resized" : "moved";
+    }
+    out.push({ id, kind: "node", state, label: `${nodeTitle(node)} · ${what} ${verb}` });
   }
   const titleOf = (id: string) => {
     const n = currentNodes.get(id) ?? pastNodes.get(id);

@@ -27,12 +27,48 @@ describe("parseCanvas", () => {
 describe("diffCanvas", () => {
   const d = diffCanvas(past, current);
 
-  it("classifies cards by content, not position", () => {
+  it("classifies cards by content, and by position relative to the anchor", () => {
     expect(Object.fromEntries(d.nodes)).toEqual({ aims: "same", methods: "edited", data: "moved", collab: "added", questions: "removed" });
+    expect(d.geometry.get("data")).toEqual({ moved: true, resized: true });
+    expect(d.anchor).toEqual({ id: "aims", dx: 0, dy: 0 });
   });
 
   it("treats a connection that only changed sides as unchanged", () => {
     expect(Object.fromEntries(d.edges)).toEqual({ e1: "moved", e3: "added", e2: "removed" });
+  });
+
+  it("doesn't call it a move when the whole canvas shifted together", () => {
+    const shift = (c: CanvasData, dx: number, dy: number): CanvasData => ({ ...c, nodes: c.nodes.map((x) => ({ ...x, x: x.x + dx, y: x.y + dy })) });
+    const before: CanvasData = { nodes: [node("a"), node("b", { x: 400 }), node("c", { y: 300 })], edges: [] };
+    const moved = diffCanvas(before, shift(before, 120, -40));
+    expect([...moved.nodes.values()]).toEqual(["same", "same", "same"]);
+    expect(moved.anchor).toEqual({ id: "a", dx: 120, dy: -40 });
+  });
+
+  it("anchors on the shift most unchanged cards share, so a lone moved card is the one marked", () => {
+    const before: CanvasData = { nodes: [node("a"), node("b", { x: 400 }), node("c", { y: 300 }), node("d", { x: 800 })], edges: [] };
+    const after: CanvasData = {
+      nodes: [node("a", { x: 100 }), node("b", { x: 500 }), node("c", { x: 100, y: 300 }), node("d", { x: 1200, y: 40 })],
+      edges: [],
+    };
+    const r = diffCanvas(before, after);
+    expect(Object.fromEntries(r.nodes)).toEqual({ a: "same", b: "same", c: "same", d: "moved" });
+    expect(r.geometry.get("d")).toEqual({ moved: true, resized: false });
+    expect(r.anchor).toEqual({ id: "a", dx: 100, dy: 0 });
+  });
+
+  it("counts a resize as a change, and an edit wins over a move", () => {
+    const before: CanvasData = { nodes: [node("a"), node("b", { x: 400 }), node("c", { x: 800 })], edges: [] };
+    const after: CanvasData = { nodes: [node("a"), node("b", { x: 400, width: 300 }), node("c", { x: 900, text: "changed" })], edges: [] };
+    const r = diffCanvas(before, after);
+    expect(Object.fromEntries(r.nodes)).toEqual({ a: "same", b: "moved", c: "edited" });
+    expect(r.geometry.get("b")).toEqual({ moved: false, resized: true });
+    expect(describeCanvasChanges(r).map((c) => c.label)).toEqual(["b · card resized", "changed · card edited"]);
+  });
+
+  it("uses no anchor shift when no card is unchanged", () => {
+    const r = diffCanvas({ nodes: [node("a")], edges: [] }, { nodes: [node("a", { x: 50, text: "new" })], edges: [] });
+    expect(r.anchor).toEqual({ id: null, dx: 0, dy: 0 });
   });
 
   it("counts states", () => {
@@ -42,6 +78,7 @@ describe("diffCanvas", () => {
   it("describes changes cards first, then connections", () => {
     expect(describeCanvasChanges(d).map((c) => c.label)).toEqual([
       "Hi-C and imaging on 12 samples · card edited",
+      "data · card moved and resized",
       "Collaborators · card added",
       "questions · card removed",
       "Hi-C and imaging on 12 samples → Collaborators · connection added",

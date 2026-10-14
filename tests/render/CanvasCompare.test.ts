@@ -27,17 +27,17 @@ beforeAll(() => installObsidianDom());
 const card = (id: string, x: number, text: string) => ({ id, type: "text", x, y: 0, width: 1200, height: 300, text });
 // About 6,000 units wide, like the user's project maps: "fit" lands far below 50% zoom.
 const past = {
-  nodes: [card("a", 0, "## Aims\nold"), card("b", 2400, "Methods"), card("c", 4800, "Datasets"), { ...card("e", 0, "Colour only"), y: 600 }],
+  nodes: [card("a", 0, "## Aims\nold"), card("b", 2400, "Methods"), card("c", 4800, "Datasets"), { ...card("e", 0, "Colour only"), y: 600 }, { ...card("f", 0, "Moved card"), y: 1200 }],
   edges: [{ id: "ab", fromNode: "a", toNode: "b" }, { id: "bc", fromNode: "b", toNode: "c", label: "uses" }],
 };
 const current = {
-  nodes: [card("a", 0, "## Aims\nnew"), card("b", 2400, "Methods"), card("d", 4800, "Collaborators"), { ...card("e", 0, "Colour only"), y: 600, color: "4" }],
+  nodes: [card("a", 0, "## Aims\nnew"), card("b", 2400, "Methods"), card("d", 4800, "Collaborators"), { ...card("e", 0, "Colour only"), y: 600, color: "4" }, { ...card("f", 900, "Moved card"), y: 1200 }],
   edges: [{ id: "ab", fromNode: "a", toNode: "b" }, { id: "bd", fromNode: "b", toNode: "d" }],
 };
 
 function make(restored: unknown[] = []) {
   const host = document.body.createDiv();
-  const state = { zoom: null as number | null, scrollLeft: 0, scrollTop: 0, showMoved: false, region: defaultRegionState() };
+  const state = { zoom: null as number | null, scrollLeft: 0, scrollTop: 0, region: defaultRegionState() };
   const cc = new CanvasCompare({
     app: { vault: { getAbstractFileByPath: () => null, getResourcePath: () => "" } } as never,
     parent: { addChild: (c: unknown) => c, removeChild: () => {} } as never,
@@ -60,8 +60,8 @@ async function draw(restored: unknown[] = []) {
 describe("CanvasCompare", () => {
   it("draws every card of both versions and the selection hint", async () => {
     const { host } = await draw();
-    expect(host.querySelectorAll(".gtm-canvas-pane.is-left .gtm-cnode")).toHaveLength(4);
-    expect(host.querySelectorAll(".gtm-canvas-pane.is-right .gtm-cnode")).toHaveLength(4);
+    expect(host.querySelectorAll(".gtm-canvas-pane.is-left .gtm-cnode")).toHaveLength(5);
+    expect(host.querySelectorAll(".gtm-canvas-pane.is-right .gtm-cnode")).toHaveLength(5);
     expect(host.querySelector(".gtm-region-bar")?.textContent).toContain("Click a card");
   });
 
@@ -80,7 +80,7 @@ describe("CanvasCompare", () => {
     expect(root.classList.contains("is-overview")).toBe(true);
     expect(root.style.getPropertyValue("--gtm-zoom")).toBe(String(state.zoom));
     const titles = [...host.querySelectorAll(".gtm-canvas-pane.is-left .gtm-cnode-title")].map((t) => t.textContent);
-    expect(titles).toEqual(["Aims", "Methods", "Datasets", "Colour only"]);
+    expect(titles).toEqual(["Aims", "Methods", "Datasets", "Colour only", "Moved card"]);
   });
 
   it("zooms in far enough to read a change when jumping to it", async () => {
@@ -115,5 +115,12 @@ describe("CanvasCompare", () => {
     expect(state.scrollLeft).toBe(120);
     expect(host.querySelector(".previous-screen")).not.toBeNull();
     expect(host.querySelector(".gtm-canvas-compare")).toBeNull();
+  });
+
+  it("tags a card that moved relative to the anchor, and has no 'only moved' toggle any more", async () => {
+    const { host } = await draw();
+    const tags = [...host.querySelectorAll(".gtm-canvas-pane.is-right .gtm-cnode-tag")].map((t) => t.textContent);
+    expect(tags).toContain("Moved");
+    expect(host.querySelector(".gtm-canvas-moved")).toBeNull();
   });
 });

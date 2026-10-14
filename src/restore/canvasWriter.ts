@@ -11,11 +11,19 @@ export function formatCanvas(data: CanvasData): string {
 }
 
 /**
- * Applies a region restore. Replaced cards take their past content (and past position unless `keepPositions`);
+ * Applies a region restore. Replaced cards take their past content and past position, shifted by the anchor
+ * `offset` (unless `keepPositions`);
  * added items are inserted after their nearest surviving predecessor in the past order, so layering is kept;
  * removed cards take their connections with them.
  */
-export function applyCanvasPlan(current: CanvasData, past: CanvasData, plan: RestorePlan, opts: { keepPositions: boolean }): CanvasData {
+export function applyCanvasPlan(
+  current: CanvasData,
+  past: CanvasData,
+  plan: RestorePlan,
+  opts: { keepPositions: boolean; offset?: { dx: number; dy: number } },
+): CanvasData {
+  const dx = opts.offset?.dx ?? 0;
+  const dy = opts.offset?.dy ?? 0;
   const remove = new Set(plan.remove);
   const replace = new Set(plan.replace);
   const add = new Set(plan.add);
@@ -27,9 +35,10 @@ export function applyCanvasPlan(current: CanvasData, past: CanvasData, plan: Res
     .map((n) => {
       const p = pastNodes.get(n.id);
       if (!replace.has(n.id) || !p) return n;
-      return opts.keepPositions ? { ...p, x: n.x, y: n.y, width: n.width, height: n.height } : { ...p };
+      return opts.keepPositions ? { ...p, x: n.x, y: n.y, width: n.width, height: n.height } : { ...p, x: p.x + dx, y: p.y + dy };
     });
-  nodes = insertInPastOrder(nodes, past.nodes, add);
+  // Cards that come back land where they were relative to the anchor (the canvas may have shifted since).
+  nodes = insertInPastOrder(nodes, past.nodes, add).map((n) => (add.has(n.id) && !current.nodes.some((c) => c.id === n.id) ? { ...n, x: n.x + dx, y: n.y + dy } : n));
   const nodeIds = new Set(nodes.map((n) => n.id));
 
   let edges = current.edges
