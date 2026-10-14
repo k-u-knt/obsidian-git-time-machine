@@ -272,7 +272,21 @@ export class TimeMachineView extends ItemView {
     this.canvasDiff = this.kind() === "canvas" ? this.computeCanvasDiff() : null;
     this.renderHeader(entry);
     this.renderTimeline();
-    await this.renderCompare(entry);
+    await this.drawCompare(entry, token);
+  }
+
+  /** Draws the comparison; a failure shows a message instead of leaving a stale or half-drawn screen. */
+  private async drawCompare(entry: TimelineEntry, token = this.renderToken): Promise<void> {
+    try {
+      await this.renderCompare(entry);
+    } catch (e) {
+      if (token !== this.renderToken) return;
+      this.renderer?.destroy();
+      this.renderer = null;
+      this.compareEl.empty();
+      const box = this.messageBox(this.compareEl, "Couldn't draw this comparison", describeError(e));
+      box.createEl("button", { cls: "mod-cta", text: "Try again" }).addEventListener("click", () => void this.renderAll());
+    }
   }
 
   private computeDiff(): TextDiff | null {
@@ -410,7 +424,7 @@ export class TimeMachineView extends ItemView {
     const entry = this.selectedEntry();
     if (!entry) return;
     this.renderHeader(entry);
-    await this.renderCompare(entry);
+    await this.drawCompare(entry);
   }
 
   /** Called 500 ms after the note changes (typing, a restore, a sync). */

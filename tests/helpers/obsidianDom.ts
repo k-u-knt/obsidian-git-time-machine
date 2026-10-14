@@ -7,10 +7,15 @@ type Info = string | { cls?: string | string[]; text?: string; attr?: Record<str
 export function installObsidianDom(): void {
   const proto = Node.prototype as unknown as Record<string, unknown>;
   if (proto.createDiv) return;
-  const apply = <T extends Element>(el: T, o: Info): T => {
+  // Like Obsidian: createEl/createDiv split a class string on spaces, but createSvg adds each string as ONE
+  // token, so `cls: "a b"` throws for SVG (classList.add rejects spaces). Pass an array for several SVG classes.
+  const apply = <T extends Element>(el: T, o: Info, splitClasses = true): T => {
     const info = typeof o === "string" ? { cls: o } : o;
     if (!info) return el;
-    if (info.cls) for (const c of ([] as string[]).concat(info.cls).join(" ").split(" ").filter(Boolean)) el.classList.add(c);
+    if (info.cls) {
+      const list = ([] as string[]).concat(info.cls);
+      for (const c of splitClasses ? list.join(" ").split(" ").filter(Boolean) : list) el.classList.add(c);
+    }
     if (info.text !== undefined) el.textContent = info.text;
     if (info.attr) for (const [k, v] of Object.entries(info.attr)) if (v !== null && v !== undefined) el.setAttribute(k, String(v));
     return el;
@@ -29,7 +34,7 @@ export function installObsidianDom(): void {
       return this.createEl("span", o, cb);
     },
     createSvg(this: Node, tag: string, o?: Info, cb?: (el: Element) => void) {
-      const el = apply(document.createElementNS("http://www.w3.org/2000/svg", tag), o);
+      const el = apply(document.createElementNS("http://www.w3.org/2000/svg", tag), o, false);
       this.appendChild(el);
       cb?.(el);
       return el;

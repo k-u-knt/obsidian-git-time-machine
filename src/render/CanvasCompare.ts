@@ -353,7 +353,8 @@ export class CanvasCompare implements CompareRenderer {
     const pb = anchor(b, e.toSide, a);
     const d = Math.max(40, Math.hypot(pb.x - pa.x, pb.y - pa.y) / 3);
     const path = `M${pa.x},${pa.y} C${pa.x + pa.nx * d},${pa.y + pa.ny * d} ${pb.x + pb.nx * d},${pb.y + pb.ny * d} ${pb.x},${pb.y}`;
-    const g = svg.createSvg("g", { cls: `gtm-cedge is-${state}` });
+    // createSvg adds a class string as one token, so several classes must be an array.
+    const g = svg.createSvg("g", { cls: ["gtm-cedge", `is-${state}`] });
     if (e.color) g.style.setProperty("--gtm-edge-color", /^\d$/.test(e.color) ? `rgb(var(--canvas-color-${e.color}))` : e.color);
     const p = g.createSvg("path", { attr: { d: path } });
     if ((e.toEnd ?? "arrow") === "arrow") p.setAttr("marker-end", `url(#gtm-arrow-${which})`);
