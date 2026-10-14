@@ -2,23 +2,25 @@ import { describe, expect, it } from "vitest";
 import { canvasTextTarget } from "../../src/restore/canvasTarget";
 import { StaleWriteError } from "../../src/restore/Restorer";
 
-/** A fake Canvas view: `reloads` says whether it picks up file changes by itself. */
-function setup(opts: { reloads: boolean; unsaved?: string }) {
+/** A fake Canvas view: `data` is what's on screen; `save()` writes it to disk. `reloads`: picks up file changes by itself. */
+function setup(opts: { reloads: boolean; onScreen?: string }) {
   const vault = {
     disk: '{"nodes":[],"edges":[]}',
+    writes: 0,
     read: async () => vault.disk,
     process: async (_f: unknown, fn: (d: string) => string) => {
       vault.disk = fn(vault.disk);
+      vault.writes++;
       if (opts.reloads) view.data = vault.disk;
     },
   };
   const view = {
     file: { path: "map.canvas" },
-    data: vault.disk,
+    data: opts.onScreen ?? vault.disk,
     saves: 0,
     async save() {
       view.saves++;
-      if (opts.unsaved !== undefined) vault.disk = opts.unsaved;
+      vault.disk = view.data;
     },
     getViewData: () => view.data,
   };
@@ -28,10 +30,17 @@ function setup(opts: { reloads: boolean; unsaved?: string }) {
 }
 
 describe("canvasTextTarget", () => {
-  it("asks an open canvas to save before reading", async () => {
-    const { target, view } = setup({ reloads: true, unsaved: '{"nodes":[{"id":"x"}],"edges":[]}' });
+  it("asks an open canvas with unsaved changes to save before reading", async () => {
+    const { target, view } = setup({ reloads: true, onScreen: '{"nodes":[{"id":"x"}],"edges":[]}' });
     expect(await target.read()).toBe('{"nodes":[{"id":"x"}],"edges":[]}');
     expect(view.saves).toBe(1);
+  });
+
+  it("doesn't save an open canvas that has nothing new (no save → modify → refresh loop)", async () => {
+    const { target, view } = setup({ reloads: true });
+    await target.read();
+    await target.read();
+    expect(view.saves).toBe(0);
   });
 
   it("reopens a canvas view that didn't pick up the restore", async () => {

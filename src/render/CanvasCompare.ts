@@ -27,6 +27,10 @@ export interface CanvasCompareOptions {
 }
 
 const PAD = 80;
+/** Below this zoom, cards show a readable title instead of their (unreadably small) content. */
+const OVERVIEW_BELOW = 0.5;
+/** Jumping to a change zooms in at least this far, so the change can be read. */
+const READ_ZOOM = 0.6;
 const IMAGE = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
 
 interface Side {
@@ -41,6 +45,7 @@ interface Side {
 /** Both canvases drawn in one coordinate system, with cards marked by what changed in their content. */
 export class CanvasCompare implements CompareRenderer {
   private readonly component = new Component();
+  private root!: HTMLElement;
   private left!: Side;
   private right!: Side;
   private minX = 0;
@@ -59,6 +64,7 @@ export class CanvasCompare implements CompareRenderer {
     const { diff, state } = this.o;
     this.measure([...diff.past.nodes, ...diff.current.nodes]);
     const root = host.createDiv({ cls: "gtm-canvas-compare", attr: { tabindex: "-1" } });
+    this.root = root;
     root.addEventListener("keydown", (ev) => {
       if (ev.key === "Escape") this.tool?.clear();
     });
@@ -138,6 +144,7 @@ export class CanvasCompare implements CompareRenderer {
   scrollToChange(index: number): void {
     const change = describeCanvasChanges(this.o.diff)[index];
     if (!change) return;
+    if ((this.o.state.zoom ?? 1) < READ_ZOOM) this.setZoom(READ_ZOOM);
     const nodeId = change.kind === "node" ? change.id : this.edgeEnd(change.id);
     const el = this.right.nodeEls.get(nodeId ?? "") ?? this.left.nodeEls.get(nodeId ?? "");
     if (!el) return;
@@ -192,6 +199,9 @@ export class CanvasCompare implements CompareRenderer {
 
   private applyZoom(): void {
     const z = this.o.state.zoom ?? 1;
+    // Borders, tags and titles are sized in screen pixels via --gtm-zoom, so a huge canvas stays legible.
+    this.root.style.setProperty("--gtm-zoom", String(z));
+    this.root.toggleClass("is-overview", z < OVERVIEW_BELOW);
     for (const side of [this.left, this.right]) {
       side.world.style.width = `${this.width * z}px`;
       side.world.style.height = `${this.height * z}px`;
@@ -281,6 +291,7 @@ export class CanvasCompare implements CompareRenderer {
       if (which === "left" && state === "removed") this.cardButton(el, "Restore group", () => this.restoreOnly(n.id));
       return el;
     }
+    el.createDiv({ cls: "gtm-cnode-title", text: nodeTitle(n) });
     const body = el.createDiv({ cls: "gtm-cnode-body" });
     if (n.type === "text") {
       let md = n.text ?? "";

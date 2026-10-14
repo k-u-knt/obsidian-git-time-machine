@@ -13,7 +13,12 @@ export function canvasTextTarget(app: App, file: TFile): TextTarget {
   return {
     path: file.path,
     async read() {
-      for (const leaf of leaves()) await (leaf.view as TextFileView).save();
+      // Save only a view that differs from the file: saving unconditionally would fire "modify",
+      // which refreshes Time Machine, which reads again — a save every half second.
+      for (const leaf of leaves()) {
+        const view = leaf.view as TextFileView;
+        if (view.getViewData() !== (await app.vault.read(file))) await view.save();
+      }
       return app.vault.read(file);
     },
     async write(edit, before) {
