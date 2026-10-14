@@ -205,3 +205,8 @@
 .gtm-stop-past { stop-color: var(--color-red); }
 .gtm-stop-now { stop-color: var(--color-green); }
 .gtm-goback { stroke-width: 3; }
+.gtm-ghost-box { overflow: hidden; }
+.gtm-ghost-content { box-sizing: border-box; width: 100%; height: 100%; overflow: hidden; padding: 12px 18px; border-radius: 8px; font-size: var(--font-text-size); line-height: var(--line-height-normal); color: var(--text-normal); background: color-mix(in srgb, var(--background-primary) 88%, transparent); }
+.gtm-ghost-content.is-past { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-red) 40%, transparent); }
+.gtm-ghost-content.is-now { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-green) 40%, transparent); }
+.gtm-ghost-content > :first-child { margin-top: 0; }

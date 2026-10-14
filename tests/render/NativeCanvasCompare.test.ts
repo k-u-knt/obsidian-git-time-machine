@@ -2,7 +2,24 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { installObsidianDom } from "../helpers/obsidianDom";
 
-vi.mock("obsidian", () => ({ setIcon: () => {}, TFile: class {} }));
+vi.mock("obsidian", () => ({
+  setIcon: () => {},
+  TFile: class {},
+  Component: class {
+    addChild<T>(c: T) {
+      return c;
+    }
+    removeChild() {}
+    load() {}
+    unload() {}
+  },
+  // Keeps the marked-up HTML so tests can see the word highlights.
+  MarkdownRenderer: {
+    render: async (_app: unknown, md: string, el: HTMLElement) => {
+      el.innerHTML = md;
+    },
+  },
+}));
 const { diffCanvas } = await import("../../src/diff/canvasDiff");
 const { NativeCanvasCompare } = await import("../../src/render/NativeCanvasCompare");
 const { defaultRegionState } = await import("../../src/region/RegionTool");
@@ -54,6 +71,7 @@ describe("NativeCanvasCompare", () => {
       app: { vault: { getAbstractFileByPath: () => null } } as never,
       kit: { Engine: FakeEngine as never, plugin: {} },
       file: { path: "map.canvas" } as never,
+      parent: { addChild: (c: unknown) => c, removeChild: () => {} } as never,
       diff: diffCanvas(past, current),
       leftLabel: "Today, 10:53",
       state: { zoom: null, scrollLeft: 0, scrollTop: 0, region: defaultRegionState() },
@@ -84,8 +102,8 @@ describe("NativeCanvasCompare", () => {
   it("shows Moved/Resized tags only on the past side", async () => {
     made.length = 0;
     const { cmp } = await drawSimple();
-    expect([...made[0].wrapperEl.querySelectorAll(".gtm-n-tag")].map((t) => t.textContent)).toEqual(["Moved"]);
-    expect(made[1].wrapperEl.querySelectorAll(".gtm-n-tag")).toHaveLength(0);
+    expect([...made[0].wrapperEl.querySelectorAll(".gtm-n-tag")].map((t) => t.textContent)).toEqual(["Moved", "Edited"]);
+    expect([...made[1].wrapperEl.querySelectorAll(".gtm-n-tag")].map((t) => t.textContent)).toEqual(["Edited"]);
     cmp.destroy();
   });
 
@@ -94,7 +112,7 @@ describe("NativeCanvasCompare", () => {
     const { host, cmp } = await drawSimple();
     click(host, "left", 310, 10);
     await frame();
-    expect(dimmed(made[0])).toEqual(["a"]);
+    expect(dimmed(made[0])).toEqual(["a", "e"]);
     expect(dimmed(made[1])).toEqual([]);
     const ghost = host.querySelector(".gtm-canvas-pane.is-right .gtm-marks .gtm-ghost")!;
     expect(ghost.classList.contains("gtm-ghost-past")).toBe(true);
@@ -109,13 +127,30 @@ describe("NativeCanvasCompare", () => {
     const { host, cmp } = await drawSimple();
     click(host, "right", 310, 410);
     await frame();
-    expect(dimmed(made[1])).toEqual(["a"]);
+    expect(dimmed(made[1])).toEqual(["a", "e"]);
     expect(dimmed(made[0])).toEqual([]);
     const ghost = host.querySelector(".gtm-canvas-pane.is-left .gtm-marks .gtm-ghost")!;
     expect(ghost.classList.contains("gtm-ghost-now")).toBe(true);
     expect([ghost.getAttribute("x"), ghost.getAttribute("y")]).toEqual(["300", "400"]);
     expectPastToNowArrow(host, "left");
     expect(host.querySelector(".gtm-region-title")?.textContent).toContain("1 replaces");
+    cmp.destroy();
+  });
+
+  it("shows the old text in a past ghost and the new text in a current ghost, with changed words highlighted", async () => {
+    made.length = 0;
+    const { host, cmp } = await drawSimple();
+    click(host, "left", 910, 10);
+    await frame();
+    const old = host.querySelector(".gtm-canvas-pane.is-right .gtm-marks .gtm-ghost-content")!;
+    expect(old.textContent).toBe("Hi-C on twelve samples");
+    expect(old.querySelectorAll(".gtm-word-del, .gtm-word-add")).toHaveLength(0);
+    click(host, "right", 910, 610);
+    await frame();
+    const now = host.querySelector(".gtm-canvas-pane.is-left .gtm-marks .gtm-ghost-content")!;
+    expect(now.textContent).toBe("Hi-C and imaging on twelve samples");
+    expect([...now.querySelectorAll(".gtm-word-add")].map((w) => w.textContent)).toEqual(["and imaging"]);
+    expect(host.querySelectorAll(".gtm-canvas-pane.is-right .gtm-marks .gtm-ghost-content")).toHaveLength(0);
     cmp.destroy();
   });
 });
@@ -140,13 +175,17 @@ function click(host: HTMLElement, side: "left" | "right", x: number, y: number) 
 }
 
 async function drawSimple() {
-  const past = { nodes: [card("a", 0, "anchor"), card("m", 300, "moved me")], edges: [] };
-  const current = { nodes: [card("a", 0, "anchor"), { ...card("m", 300, "moved me"), y: 400 }], edges: [] };
+  const past = { nodes: [card("a", 0, "anchor"), card("m", 300, "moved me"), card("e", 900, "Hi-C on twelve samples")], edges: [] };
+  const current = {
+    nodes: [card("a", 0, "anchor"), { ...card("m", 300, "moved me"), y: 400 }, { ...card("e", 900, "Hi-C and imaging on twelve samples"), y: 600 }],
+    edges: [],
+  };
   const host = document.body.createDiv();
   const cmp = new NativeCanvasCompare({
     app: { vault: { getAbstractFileByPath: () => null } } as never,
     kit: { Engine: FakeEngine as never, plugin: {} },
     file: { path: "map.canvas" } as never,
+    parent: { addChild: (c: unknown) => c, removeChild: () => {} } as never,
     diff: diffCanvas(past, current),
     leftLabel: "Today, 10:53",
     state: { zoom: null, scrollLeft: 0, scrollTop: 0, region: defaultRegionState() },

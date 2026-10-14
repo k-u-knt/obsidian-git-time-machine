@@ -631,6 +631,7 @@ export class TimeMachineView extends ItemView {
         app: this.app,
         kit,
         file,
+        parent: this,
         diff: this.canvasDiff,
         leftLabel: this.when(entry),
         state: this.canvasState,

@@ -1,4 +1,4 @@
-import { setIcon, TFile, type App } from "obsidian";
+import { Component, MarkdownRenderer, setIcon, TFile, type App } from "obsidian";
 import { describeCanvasChanges, GEOMETRY_FIELDS, nodeTitle, sameItem, shiftNode, type CanvasDiff, type ItemState } from "../diff/canvasDiff";
 import { canvasAdapter } from "../region/canvasAdapter";
 import { shiftRegion } from "../region/geometry";
@@ -6,6 +6,7 @@ import { expandSelection, itemAt } from "../region/selection";
 import { RegionTool, type Tool } from "../region/RegionTool";
 import type { RestorePlan } from "../region/restorePlan";
 import type { CanvasViewState } from "./CanvasCompare";
+import { markWords } from "./markdownBlocks";
 import { createReadonlyCanvas, type NativeCanvas, type NativeCanvasKit } from "./nativeCanvas";
 import type { CompareRenderer } from "./types";
 
@@ -13,6 +14,8 @@ export interface NativeCanvasCompareOptions {
   app: App;
   kit: NativeCanvasKit;
   file: TFile;
+  /** Owns the Markdown rendered inside ghosts. */
+  parent: Component;
   diff: CanvasDiff;
   leftLabel: string;
   state: CanvasViewState;
@@ -49,6 +52,7 @@ export class NativeCanvasCompare implements CompareRenderer {
   private fromRight = false;
   private marksKey = "";
   private gradients = 0;
+  private ghostComponent: Component | null = null;
 
   constructor(private readonly o: NativeCanvasCompareOptions) {}
 
@@ -149,6 +153,7 @@ export class NativeCanvasCompare implements CompareRenderer {
     this.destroyed = true;
     window.cancelAnimationFrame(this.frame);
     this.resizeObserver?.disconnect();
+    if (this.ghostComponent) this.o.parent.removeChild(this.ghostComponent);
     for (const s of [this.left, this.right]) {
       if (!s) continue;
       const st = s.canvas.getState();
@@ -267,7 +272,9 @@ export class NativeCanvasCompare implements CompareRenderer {
     const key = JSON.stringify([v.side, [...v.ids], keep]);
     if (key === this.marksKey) return;
     this.marksKey = key;
-    for (const s of [this.left, this.right]) for (const el of [...s.marks.querySelectorAll(".gtm-ghost, .gtm-goback, .gtm-grad")]) el.remove();
+    for (const s of [this.left, this.right]) for (const el of [...s.marks.querySelectorAll(".gtm-ghost, .gtm-ghost-box, .gtm-goback, .gtm-grad")]) el.remove();
+    if (this.ghostComponent) this.o.parent.removeChild(this.ghostComponent);
+    this.ghostComponent = this.o.parent.addChild(new Component());
     const { diff } = this.o;
     const past = new Map(diff.past.nodes.map((n) => [n.id, n]));
     const current = new Map(diff.current.nodes.map((n) => [n.id, n]));
@@ -280,21 +287,41 @@ export class NativeCanvasCompare implements CompareRenderer {
         // Picked in the past: on the current side, where it was (red) → where it is now.
         if (!p) continue;
         const then = shiftNode(p, diff.anchor);
-        this.drawGhost(this.right, then, "past");
+        this.drawGhost(this.right, then, "past", this.ghostMarkdown(id, "past"));
         if (c) this.drawArrow(this.right, then, c);
       } else {
         // Picked now: on the past side, where it is now (green), reached from where it was.
         if (!c) continue;
         const now = shiftNode(c, back);
-        this.drawGhost(this.left, now, "now");
+        this.drawGhost(this.left, now, "now", this.ghostMarkdown(id, "now"));
         if (p) this.drawArrow(this.left, p, now);
       }
     }
   }
 
-  /** A dashed outline: red for a past position, green for a current one. */
-  private drawGhost(side: Side, box: Box, kind: "past" | "now"): void {
+  /**
+   * A dashed outline (red: a past position, green: a current one) showing the card's content then/now,
+   * rendered like a note with the changed words highlighted.
+   */
+  private drawGhost(side: Side, box: Box, kind: "past" | "now", markdown: string): void {
     side.marks.createSvg("rect", { cls: ["gtm-ghost", `gtm-ghost-${kind}`], attr: { x: box.x, y: box.y, width: box.width, height: box.height, rx: 8 } });
+    if (!markdown.trim()) return;
+    const fo = side.marks.createSvg("foreignObject", { cls: "gtm-ghost-box", attr: { x: box.x, y: box.y, width: box.width, height: box.height } });
+    const content = fo.createDiv({ cls: ["gtm-ghost-content", `is-${kind}`, "markdown-rendered"] });
+    void MarkdownRenderer.render(this.o.app, markdown, content, this.o.file.path, this.ghostComponent ?? this.o.parent);
+  }
+
+  /** The card's text then (`past`) or now (`now`); edited text gets the same word highlights as notes. */
+  private ghostMarkdown(id: string, kind: "past" | "now"): string {
+    const p = this.o.diff.past.nodes.find((n) => n.id === id);
+    const c = this.o.diff.current.nodes.find((n) => n.id === id);
+    if (p?.type === "text" && c?.type === "text" && p.text !== c.text) {
+      const m = markWords(p.text ?? "", c.text ?? "");
+      return kind === "past" ? m.left : m.right;
+    }
+    const n = kind === "past" ? p : c;
+    if (!n) return "";
+    return n.type === "text" ? (n.text ?? "") : `**${nodeTitle(n)}**`;
   }
 
   /** An arrow from a past position to a current one, fading red → green. */
