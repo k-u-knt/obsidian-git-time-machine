@@ -157,10 +157,10 @@
 .gtm-region-actions { display: flex; gap: 8px; }
 
 /* Obsidian's own canvas engine inside the comparison */
-.gtm-native-body { position: relative; flex: 1; min-height: 0; --gtm-zoom: 1; }
+.gtm-native-body { position: relative; flex: 1; min-height: 0; overflow: hidden; --gtm-zoom: 1; }
 .gtm-native-host { position: absolute; inset: 0; }
 .gtm-native-host > .canvas-wrapper { position: absolute; inset: 0; }
-.gtm-native-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; z-index: 50; }
+.gtm-native-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; z-index: 50; }
 .gtm-native-body.is-drawing-tool .gtm-native-overlay { pointer-events: all; cursor: crosshair; }
 .canvas-node.gtm-n { outline-style: solid; outline-width: calc(3px / var(--gtm-zoom)); outline-offset: calc(2px / var(--gtm-zoom)); border-radius: var(--radius-m); }
 .canvas-node.gtm-n-edited { outline-color: var(--color-orange); }
@@ -180,3 +180,17 @@
 .gtm-e-added .canvas-display-path { stroke: var(--color-green); stroke-width: calc(var(--canvas-edge-width, 3px) * 1.6); }
 .gtm-e-edited .canvas-display-path { stroke: var(--color-orange); stroke-width: calc(var(--canvas-edge-width, 3px) * 1.6); }
 .gtm-e-removed .canvas-display-path { stroke: var(--color-red); stroke-dasharray: 10 8; }
+.gtm-native .gtm-canvas-panes { position: relative; }
+.gtm-native-links { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; z-index: 60; }
+.gtm-link { fill: none; stroke-width: 2.5; stroke-dasharray: 7 5; }
+.gtm-goback { fill: none; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+.gtm-link-same, .gtm-goback-same { stroke: var(--text-muted); }
+.gtm-link-moved, .gtm-goback-moved { stroke: var(--color-blue); }
+.gtm-link-edited, .gtm-goback-edited { stroke: var(--color-orange); }
+.gtm-link-added, .gtm-goback-added { stroke: var(--color-green); }
+.gtm-link-removed, .gtm-goback-removed { stroke: var(--color-red); }
+.gtm-arrow-same path { fill: var(--text-muted); }
+.gtm-arrow-moved path { fill: var(--color-blue); }
+.gtm-arrow-edited path { fill: var(--color-orange); }
+.gtm-arrow-added path { fill: var(--color-green); }
+.gtm-arrow-removed path { fill: var(--color-red); }

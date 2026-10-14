@@ -42,6 +42,9 @@ export class NativeCanvasCompare implements CompareRenderer {
   private selected = new Set<string>();
   private plan: RestorePlan | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  private panesEl!: HTMLElement;
+  /** Lines across both sides joining a selected card's past and current positions. */
+  private links!: SVGSVGElement;
 
   constructor(private readonly o: NativeCanvasCompareOptions) {}
 
@@ -68,8 +71,11 @@ export class NativeCanvasCompare implements CompareRenderer {
     toolbar.createEl("button", { text: "Fit" }).addEventListener("click", () => this.fit());
 
     const panes = root.createDiv({ cls: "gtm-canvas-panes" });
+    this.panesEl = panes;
     this.left = this.side(panes, "left", this.o.leftLabel, "read-only", "lock", diff.past);
     this.right = this.side(panes, "right", "Now", "your canvas", "pencil", diff.current);
+    this.links = panes.createSvg("svg", { cls: "gtm-native-links" });
+    addArrows(this.links, "link");
     const bar = root.createDiv({ cls: "gtm-region-bar" });
 
     this.mark(this.left);
@@ -159,7 +165,9 @@ export class NativeCanvasCompare implements CompareRenderer {
     const body = pane.createDiv({ cls: "gtm-native-body" });
     const container = body.createDiv({ cls: "gtm-native-host" });
     const canvas = createReadonlyCanvas(this.o.kit, this.o.app, this.o.file, container, data);
-    const overlay = body.createSvg("svg", { cls: "gtm-native-overlay" });
+    // Scaled exactly like the canvas (no letterboxing), and clipped to this side by CSS.
+    const overlay = body.createSvg("svg", { cls: "gtm-native-overlay", attr: { preserveAspectRatio: "none" } });
+    if (which === "right") addArrows(overlay, "goback");
     return { canvas, pane: body, overlay, which };
   }
 
@@ -231,6 +239,7 @@ export class NativeCanvasCompare implements CompareRenderer {
       this.mark(s);
     }
     this.highlight();
+    this.drawLinks();
     this.frame = window.requestAnimationFrame(() => this.loop());
   }
 
@@ -242,7 +251,7 @@ export class NativeCanvasCompare implements CompareRenderer {
     const key = JSON.stringify([this.plan?.add, this.plan?.replace, this.o.state.region.keepPositions]);
     if (this.right.overlay.dataset.key === key) return;
     this.right.overlay.dataset.key = key;
-    this.right.overlay.empty();
+    for (const el of [...this.right.overlay.querySelectorAll(".gtm-ghost, .gtm-goback")]) el.remove();
     if (!this.plan) return;
     const past = new Map(this.o.diff.past.nodes.map((n) => [n.id, n]));
     const current = new Map(this.o.diff.current.nodes.map((n) => [n.id, n]));
@@ -252,7 +261,50 @@ export class NativeCanvasCompare implements CompareRenderer {
       const c = current.get(id);
       const box = this.o.state.region.keepPositions && c ? c : shiftNode(p, this.o.diff.anchor);
       this.right.overlay.createSvg("rect", { cls: "gtm-ghost", attr: { x: box.x, y: box.y, width: box.width, height: box.height, rx: 8 } });
+      // "How it moves when you go back": an arrow from where the card is now to where it would go.
+      if (c && (c.x !== box.x || c.y !== box.y)) {
+        const state = this.o.diff.nodes.get(id) ?? "same";
+        this.right.overlay.createSvg("path", {
+          cls: ["gtm-goback", `gtm-goback-${state}`],
+          attr: { d: `M${c.x + c.width / 2},${c.y + c.height / 2} L${box.x + box.width / 2},${box.y + box.height / 2}`, "marker-end": `url(#gtm-goback-${state})` },
+        });
+      }
     }
+  }
+
+  /** Joins each selected card's place now (right) to its place then (left), in the colour of its change. */
+  private drawLinks(): void {
+    const svg = this.links;
+    const existing = svg.querySelectorAll(".gtm-link");
+    if (!this.selected.size && !existing.length) return;
+    for (const el of [...existing]) el.remove();
+    const past = new Map(this.o.diff.past.nodes.map((n) => [n.id, n]));
+    const current = new Map(this.o.diff.current.nodes.map((n) => [n.id, n]));
+    for (const id of this.selected) {
+      const p = past.get(id);
+      if (!p) continue;
+      const now = current.get(id) ?? shiftNode(p, this.o.diff.anchor);
+      const state = this.o.diff.nodes.get(id) ?? "same";
+      const a = this.toPanes(this.right, now);
+      const b = this.toPanes(this.left, p);
+      const from = { x: a.x, y: a.y + a.h / 2 };
+      const to = { x: b.x + b.w, y: b.y + b.h / 2 };
+      const bend = Math.max(40, Math.abs(from.x - to.x) / 3);
+      svg.createSvg("path", {
+        cls: ["gtm-link", `gtm-link-${state}`],
+        attr: { d: `M${from.x},${from.y} C${from.x - bend},${from.y} ${to.x + bend},${to.y} ${to.x},${to.y}`, "marker-end": `url(#gtm-link-${state})` },
+      });
+    }
+  }
+
+  /** A card's box in the panes' pixel coordinates, using what the side's canvas currently shows. */
+  private toPanes(side: Side, box: { x: number; y: number; width: number; height: number }): { x: number; y: number; w: number; h: number } {
+    const bb = side.canvas.getViewportBBox();
+    const r = side.pane.getBoundingClientRect();
+    const pr = this.panesEl.getBoundingClientRect();
+    const kx = r.width / Math.max(1e-6, bb.maxX - bb.minX);
+    const ky = r.height / Math.max(1e-6, bb.maxY - bb.minY);
+    return { x: r.left - pr.left + (box.x - bb.minX) * kx, y: r.top - pr.top + (box.y - bb.minY) * ky, w: box.width * kx, h: box.height * ky };
   }
 
   private fit(): void {
@@ -266,5 +318,17 @@ export class NativeCanvasCompare implements CompareRenderer {
       b.toggleClass("is-active", t === tool);
       b.setAttr("aria-pressed", String(t === tool));
     }
+  }
+}
+
+/** Arrowheads in each change colour, ids `${prefix}-${state}`. */
+function addArrows(svg: SVGSVGElement, prefix: string): void {
+  const defs = svg.createSvg("defs");
+  for (const state of ["same", "moved", "edited", "added", "removed"]) {
+    const m = defs.createSvg("marker", {
+      cls: ["gtm-arrow", `gtm-arrow-${state}`],
+      attr: { id: `${prefix}-${state}`, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" },
+    });
+    m.createSvg("path", { attr: { d: "M0,0 L10,5 L0,10 z" } });
   }
 }

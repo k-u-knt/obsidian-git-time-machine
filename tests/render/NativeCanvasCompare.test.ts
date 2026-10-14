@@ -72,4 +72,45 @@ describe("NativeCanvasCompare", () => {
     cmp.destroy();
     expect(made.every((e) => !e.loaded)).toBe(true);
   });
+
+  it("keeps each side's drawings inside that side and scaled exactly like its canvas", async () => {
+    made.length = 0;
+    const { host } = await drawSimple();
+    const overlays = [...host.querySelectorAll(".gtm-native-overlay")];
+    expect(overlays).toHaveLength(2);
+    for (const o of overlays) expect(o.getAttribute("preserveAspectRatio")).toBe("none");
+    expect(overlays[0].closest(".gtm-canvas-pane.is-left")).not.toBeNull();
+    expect(overlays[1].closest(".gtm-canvas-pane.is-right")).not.toBeNull();
+  });
+
+  it("links a selected card across the two sides, and shows on the right where it would go back to", async () => {
+    made.length = 0;
+    const { host, cmp } = await drawSimple();
+    (cmp as unknown as { tool: { selectOnly(id: string): void } }).tool.selectOnly("m");
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    expect([...host.querySelectorAll(".gtm-native-links .gtm-link")].map((l) => l.getAttribute("class"))).toEqual(["gtm-link gtm-link-moved"]);
+    expect(host.querySelectorAll(".gtm-canvas-pane.is-right .gtm-native-overlay .gtm-goback")).toHaveLength(1);
+    (cmp as unknown as { tool: { clear(): void } }).tool.clear();
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    expect(host.querySelectorAll(".gtm-native-links .gtm-link")).toHaveLength(0);
+    cmp.destroy();
+  });
 });
+
+async function drawSimple() {
+  const past = { nodes: [card("a", 0, "anchor"), card("m", 300, "moved me")], edges: [] };
+  const current = { nodes: [card("a", 0, "anchor"), { ...card("m", 300, "moved me"), y: 400 }], edges: [] };
+  const host = document.body.createDiv();
+  const cmp = new NativeCanvasCompare({
+    app: { vault: { getAbstractFileByPath: () => null } } as never,
+    kit: { Engine: FakeEngine as never, plugin: {} },
+    file: { path: "map.canvas" } as never,
+    diff: diffCanvas(past, current),
+    leftLabel: "Today, 10:53",
+    state: { zoom: null, scrollLeft: 0, scrollTop: 0, region: defaultRegionState() },
+    onUseText: () => {},
+    onRestorePlan: () => {},
+  });
+  await cmp.render(host);
+  return { host, cmp };
+}
