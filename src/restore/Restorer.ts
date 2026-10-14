@@ -39,6 +39,14 @@ export class Restorer {
     return (await this.replace(target, current, next)) ? "applied" : "stale";
   }
 
+  /** Writes `next` only if the file still equals `expectedCurrent` (the text the comparison was drawn from). */
+  async replaceText(target: TextTarget, expectedCurrent: string, next: string): Promise<ApplyResult> {
+    const current = await target.read();
+    if (current !== expectedCurrent) return "stale";
+    if (current === next) return "applied";
+    return (await this.replace(target, current, next)) ? "applied" : "stale";
+  }
+
   async restoreWhole(target: TextTarget, content: string): Promise<ApplyResult> {
     const current = await target.read();
     if (current === content) return "applied";

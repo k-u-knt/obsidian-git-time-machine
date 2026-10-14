@@ -66,6 +66,17 @@ describe("Restorer", () => {
     expect(t.text).toBe(right);
   });
 
+  it("replaces the whole text only if the file is unchanged, and can undo it", async () => {
+    const r = new Restorer();
+    const t = memTarget("{}");
+    expect(await r.replaceText(t, "{ }", '{"nodes":[]}')).toBe("stale");
+    expect(t.text).toBe("{}");
+    expect(await r.replaceText(t, "{}", '{"nodes":[]}')).toBe("applied");
+    expect(t.text).toBe('{"nodes":[]}');
+    await r.undo(t, async () => true);
+    expect(t.text).toBe("{}");
+  });
+
   it("keeps at most `limit` undo entries", async () => {
     const r = new Restorer(2);
     const t = memTarget("0");
