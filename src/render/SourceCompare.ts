@@ -12,6 +12,8 @@ export interface SourceCompareOptions {
   layout: "split" | "inline";
   /** Called (undebounced) when the user edits the right side or clicks a revert arrow. */
   onEdit(text: string): void;
+  /** The current diff chunks, for "jump to change". */
+  chunks(): Chunk[];
 }
 
 /** Marks transactions that mirror changes made outside this editor, so they are not written back. */
@@ -77,7 +79,9 @@ export class SourceCompare implements CompareRenderer {
     ed.dispatch({ changes: change, annotations: [fromOutside.of(true), Transaction.addToHistory.of(false)] });
   }
 
-  scrollToChunk(chunk: Chunk): void {
+  scrollToChange(index: number): void {
+    const chunk = this.o.chunks()[index];
+    if (!chunk) return;
     const ed = this.editor;
     const line = ed.state.doc.line(Math.min(chunk.rightStart + 1, ed.state.doc.lines));
     ed.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: "center" }) });

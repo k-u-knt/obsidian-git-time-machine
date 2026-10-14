@@ -68,7 +68,9 @@ export class MarkdownCompare implements CompareRenderer {
     }
   }
 
-  scrollToChunk(chunk: Chunk): void {
+  scrollToChange(index: number): void {
+    const chunk = this.o.diff.chunks[index];
+    if (!chunk) return;
     const rowIndex = this.o.diff.rows.findIndex((r) => r.chunkId === chunk.id);
     const i = this.segments.findIndex((s) => s.rowStart <= rowIndex && rowIndex < s.rowEnd);
     const el = this.segmentEls[i];
