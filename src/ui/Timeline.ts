@@ -20,11 +20,13 @@ export class Timeline {
   readonly el: HTMLElement;
 
   constructor(parent: HTMLElement, private readonly cb: TimelineCallbacks) {
-    this.el = parent.createDiv({ cls: "gtm-rail" });
+    // Focusable so ↑/↓ keep working after each re-render (which replaces the clicked button).
+    this.el = parent.createDiv({ cls: "gtm-rail", attr: { tabindex: "0", "aria-label": "Timeline: use the arrow keys to step through versions" } });
   }
 
   render(p: TimelineProps): void {
     const el = this.el;
+    const hadFocus = el.contains(el.ownerDocument.activeElement);
     el.empty();
     const head = el.createDiv({ cls: "gtm-rail-head" });
     head.createDiv({ cls: "gtm-rail-title", text: "Timeline" });
@@ -60,6 +62,11 @@ export class Timeline {
       const more = days.createEl("button", { cls: "gtm-tick gtm-more", text: p.loadingMore ? "Loading…" : "Load earlier versions…" });
       more.disabled = p.loadingMore;
       more.addEventListener("click", () => this.cb.onLoadMore());
+    }
+    if (hadFocus) {
+      const selected = days.querySelector<HTMLElement>(".gtm-tick.is-selected");
+      (selected ?? el).focus({ preventScroll: true });
+      selected?.scrollIntoView({ block: "nearest" });
     }
   }
 
@@ -100,6 +107,7 @@ export class Timeline {
       label.setText(caption(pending));
     };
     track.addEventListener("pointerdown", (ev) => {
+      this.el.focus({ preventScroll: true });
       track.setPointerCapture(ev.pointerId);
       preview(ev);
     });

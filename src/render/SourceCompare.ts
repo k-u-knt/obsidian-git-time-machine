@@ -1,8 +1,9 @@
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { MergeView, unifiedMergeView } from "@codemirror/merge";
-import { Annotation, EditorState, type Extension } from "@codemirror/state";
+import { Annotation, EditorState, Transaction, type Extension } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers } from "@codemirror/view";
 import type { Chunk } from "../diff/textDiff";
+import { docText, externalChange, lineSeparatorFor } from "./sourceDoc";
 import type { CompareRenderer } from "./types";
 
 export interface SourceCompareOptions {
@@ -15,9 +16,6 @@ export interface SourceCompareOptions {
 
 /** Marks transactions that mirror changes made outside this editor, so they are not written back. */
 const fromOutside = Annotation.define<boolean>();
-
-/** Keep the file's own line endings: CodeMirror would otherwise turn CRLF into LF on the first edit. */
-const lineSeparatorFor = (text: string): Extension => EditorState.lineSeparator.of(text.includes("\r\n") ? "\r\n" : "\n");
 
 const COLLAPSE = { margin: 3, minSize: 6 };
 
@@ -41,7 +39,7 @@ export class SourceCompare implements CompareRenderer {
       lineNumbers(),
       EditorView.lineWrapping,
       EditorView.updateListener.of((u) => {
-        if (u.docChanged && !u.transactions.some((t) => t.annotation(fromOutside))) this.o.onEdit(u.state.doc.toString());
+        if (u.docChanged && !u.transactions.some((t) => t.annotation(fromOutside))) this.o.onEdit(docText(u.state));
       }),
     ];
     if (this.o.layout === "split") {
@@ -68,11 +66,15 @@ export class SourceCompare implements CompareRenderer {
     }
   }
 
-  /** Mirrors an outside change (another editor, a restore) unless the user is typing here. */
+  /**
+   * Mirrors an outside change (another pane, a restore, a sync) as a minimal edit, even while the user is
+   * typing here, so the editor never keeps a stale copy. Kept out of this editor's undo history.
+   */
   updateRight(text: string): void {
     const ed = this.editor;
-    if (ed.hasFocus || ed.state.doc.toString() === text) return;
-    ed.dispatch({ changes: { from: 0, to: ed.state.doc.length, insert: text }, annotations: fromOutside.of(true) });
+    const change = externalChange(ed.state, text);
+    if (!change) return;
+    ed.dispatch({ changes: change, annotations: [fromOutside.of(true), Transaction.addToHistory.of(false)] });
   }
 
   scrollToChunk(chunk: Chunk): void {

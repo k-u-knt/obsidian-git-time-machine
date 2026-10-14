@@ -53,6 +53,25 @@ describe("markWords", () => {
     expect(m.right).toBe('See <span class="gtm-word-add">[[Research plan]]</span> now');
   });
 
+  it("keeps a ticked checkbox a real checkbox", () => {
+    const m = markWords("- [ ] Draft methods", "- [x] Draft methods");
+    expect(m.left).toBe("- [ ] Draft methods");
+    expect(m.right).toBe("- [x] Draft methods");
+  });
+
+  it("keeps callout headers intact when the callout type changes", () => {
+    expect(markWords("> [!note] Title", "> [!warning] Title").right).toBe("> [!warning] Title");
+  });
+
+  it("treats a footnote reference as one unit", () => {
+    expect(markWords("See[^1] now", "See[^2] now").right).toBe('See<span class="gtm-word-add">[^2]</span> now');
+  });
+
+  it("never wraps a block id at the end of a line", () => {
+    expect(markWords("Alpha beta ^id1", "Alpha gamma ^id1").right).toBe('Alpha <span class="gtm-word-add">gamma</span> ^id1');
+    expect(markWords("Alpha ^old", "Alpha ^new").right).toBe("Alpha ^new");
+  });
+
   it("leaves code fences and tables unmarked", () => {
     expect(markWords("```\na\n```", "```\nb\n```").marked).toBe(false);
     expect(markWords("| a | b |", "| a | c |").marked).toBe(false);

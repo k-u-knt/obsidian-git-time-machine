@@ -111,6 +111,24 @@ describe("HistoryService (real git)", () => {
     }
   });
 
+  it("treats brackets, ? and * in file names literally", async () => {
+    const r = await makeRepo();
+    try {
+      await r.write("Note [1].md", "mine\n");
+      await r.write("Note 1.md", "other\n");
+      r.commit("both", 1700000100);
+      await r.write("Note 1.md", "other changed\n");
+      r.commit("other only", 1700000200);
+      await r.write("Why?.md", "q\n");
+      r.commit("question", 1700000300);
+      const h = new HistoryService(new GitRunner("git", r.dir));
+      expect((await h.fileHistory("Note [1].md", { limit: 50 })).map((v) => v.path)).toEqual(["Note [1].md"]);
+      expect((await h.fileHistory("Why?.md", { limit: 50 })).map((v) => v.path)).toEqual(["Why?.md"]);
+    } finally {
+      await r.cleanup();
+    }
+  });
+
   it("handles a repo with no commits", async () => {
     const empty = await makeRepo();
     try {

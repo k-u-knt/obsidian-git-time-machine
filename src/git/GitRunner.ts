@@ -16,8 +16,11 @@ export class GitError extends Error {
   }
 }
 
-/** Global options on every call: raw UTF-8 paths, and never take optional locks (Obsidian Git may be committing). */
-const BASE_ARGS = ["-c", "core.quotepath=off", "--no-optional-locks"];
+/**
+ * Global options on every call: raw UTF-8 paths, file names never treated as glob patterns ("Note [1].md",
+ * "Why?.md"), and never take optional locks (Obsidian Git may be committing).
+ */
+const BASE_ARGS = ["-c", "core.quotepath=off", "--literal-pathspecs", "--no-optional-locks"];
 const MAX_BUFFER = 256 * 1024 * 1024;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

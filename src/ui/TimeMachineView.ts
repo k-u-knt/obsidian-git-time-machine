@@ -1,6 +1,6 @@
 import { ItemView, Notice, debounce, setIcon, type TFile, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import { describeChunks } from "../diff/describe";
-import { diffText, minimalEdit, type Chunk, type TextDiff } from "../diff/textDiff";
+import { diffText, type Chunk, type TextDiff } from "../diff/textDiff";
 import type { Version } from "../history/types";
 import type GitTimeMachinePlugin from "../main";
 import type { RepoContext } from "../main";
@@ -8,6 +8,7 @@ import { MarkdownCompare } from "../render/MarkdownCompare";
 import { fileKind, looksBinary } from "../render/registry";
 import { SourceCompare } from "../render/SourceCompare";
 import type { CompareRenderer } from "../render/types";
+import { EditorSync } from "../restore/EditorSync";
 import { obsidianTextTarget } from "../restore/obsidianTarget";
 import { Restorer, StaleWriteError, type TextTarget } from "../restore/Restorer";
 import { confirmModal } from "./ConfirmModal";
@@ -44,6 +45,8 @@ export class TimeMachineView extends ItemView {
   private allowLarge = false;
   private changeCursor = -1;
   private renderer: CompareRenderer | null = null;
+  /** Source mode only: keeps the editable side and its file in step. */
+  private sync: EditorSync | null = null;
   private readonly restorer = new Restorer();
   private loadToken = 0;
   private renderToken = 0;
@@ -51,7 +54,7 @@ export class TimeMachineView extends ItemView {
   private compareEl!: HTMLElement;
   private timeline!: Timeline;
   private readonly scheduleRefresh = debounce(() => void this.refreshLive(), 500, true);
-  private readonly writeSoon = debounce((text: string) => void this.writeFromEditor(text), 400, true);
+  private readonly writeSoon = debounce(() => void this.flushEditor(), 400, true);
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -107,7 +110,7 @@ export class TimeMachineView extends ItemView {
 
   async onClose(): Promise<void> {
     this.scheduleRefresh.cancel();
-    this.writeSoon.cancel();
+    this.flushEditorNow();
     this.renderer?.destroy();
     this.renderer = null;
   }
@@ -171,6 +174,7 @@ export class TimeMachineView extends ItemView {
   }
 
   private resetForFile(): void {
+    this.flushEditorNow();
     this.renderer?.destroy();
     this.renderer = null;
     this.ctx = null;
@@ -241,12 +245,16 @@ export class TimeMachineView extends ItemView {
     const token = ++this.renderToken;
     const entry = this.selectedEntry() ?? this.model().entries[0];
     this.selectedKey = entry.key;
+    let left: string;
     try {
-      this.leftText = entry.version ? await this.textAt(entry.version) : this.liveText;
+      left = entry.version ? await this.textAt(entry.version) : this.liveText;
     } catch (e) {
+      if (token !== this.renderToken) return;
       return this.showMessage("Couldn't read this version", describeError(e), () => void this.renderAll());
     }
+    // A newer selection may have finished first; never let a late result replace what's on screen.
     if (token !== this.renderToken) return;
+    this.leftText = left;
     this.diff = this.computeDiff();
     this.renderHeader(entry);
     this.renderTimeline();
@@ -261,6 +269,7 @@ export class TimeMachineView extends ItemView {
   }
 
   private async renderCompare(entry: TimelineEntry): Promise<void> {
+    this.flushEditorNow();
     this.renderer?.destroy();
     this.renderer = null;
     const scroll = this.compareEl.scrollTop;
@@ -280,14 +289,18 @@ export class TimeMachineView extends ItemView {
       return;
     }
     const useSource = this.mode === "source" || fileKind(this.filePath ?? "") === "text";
+    if (useSource) this.sync = new EditorSync(this.target(), this.liveText);
+    const sync = this.sync;
     this.renderer = useSource
       ? new SourceCompare({
           left: this.leftText,
           right: this.liveText,
           layout: this.layout,
           onEdit: (text) => {
+            if (!sync || this.sync !== sync) return;
             this.liveText = text;
-            this.writeSoon(text);
+            sync.edited(text);
+            this.writeSoon();
           },
         })
       : new MarkdownCompare({
@@ -360,8 +373,11 @@ export class TimeMachineView extends ItemView {
     if (!this.filePath || !this.ctx || !this.versions.length || !this.file()) return;
     const text = await this.target().read();
     if (text === this.liveText) return;
-    this.liveText = text;
-    if (this.renderer instanceof SourceCompare) {
+    if (this.renderer instanceof SourceCompare && this.sync) {
+      // Our own write landing while the user keeps typing: the editor is already ahead of the file.
+      if (text === this.sync.syncedText) return;
+      this.sync.external(text);
+      this.liveText = text;
       this.renderer.updateRight(text);
       this.diff = diffText(this.leftText, text);
       const entry = this.selectedEntry();
@@ -369,6 +385,7 @@ export class TimeMachineView extends ItemView {
       this.renderTimeline();
       return;
     }
+    this.liveText = text;
     await this.renderAll();
   }
 
@@ -385,6 +402,8 @@ export class TimeMachineView extends ItemView {
     const entry = this.selectedEntry();
     if (!entry?.version) return;
     const unsaved = this.liveText !== this.latestText;
+    const key = this.selectedKey;
+    const left = this.leftText;
     const ok = await confirmModal(this.app, {
       title: "Restore this whole version?",
       body: `Your note will be replaced with the version from ${this.when(entry)}. You can undo this from the notice or with the "Undo last restore" command.`,
@@ -392,7 +411,11 @@ export class TimeMachineView extends ItemView {
       confirmText: "Restore",
     });
     if (!ok) return;
-    const result = await this.restorer.restoreWhole(this.target(), this.leftText);
+    if (this.selectedKey !== key || this.leftText !== left) {
+      new Notice("The selected version changed, so nothing was restored.");
+      return;
+    }
+    const result = await this.restorer.restoreWhole(this.target(), left);
     if (result === "stale") new Notice("The note changed while restoring, so nothing was changed. Try again.");
     else this.undoNotice("Version restored.");
     await this.refreshLive();
@@ -424,22 +447,39 @@ export class TimeMachineView extends ItemView {
     await this.refreshLive();
   }
 
-  /** Source mode: the user typed in the right-hand editor or clicked a revert arrow. */
-  private async writeFromEditor(text: string): Promise<void> {
-    if (!this.file()) return;
-    const target = this.target();
-    const current = await target.read();
-    if (current === text) return;
+  /** Source mode: write the editor's pending text to its file (debounced from `onEdit`). */
+  private async flushEditor(): Promise<void> {
+    const sync = this.sync;
+    if (!sync) return;
+    let result: "written" | "stale" | "none";
     try {
-      await target.write(minimalEdit(current, text), current);
+      result = await sync.flush();
     } catch (e) {
-      if (!(e instanceof StaleWriteError)) new Notice(describeError(e));
+      new Notice(describeError(e));
       return;
     }
-    this.diff = diffText(this.leftText, text);
-    const entry = this.selectedEntry();
-    if (entry) this.renderHeader(entry);
-    this.renderTimeline();
+    if (this.sync !== sync) return;
+    if (result === "stale") {
+      new Notice("The note changed elsewhere, so your last edit here wasn't saved. The comparison now shows the current note.");
+      await this.refreshLive();
+    } else if (result === "written") {
+      this.diff = diffText(this.leftText, this.liveText);
+      const entry = this.selectedEntry();
+      if (entry) this.renderHeader(entry);
+      this.renderTimeline();
+    }
+  }
+
+  /** Writes any pending Source-mode edit to the file it belongs to before the editor goes away. */
+  private flushEditorNow(): void {
+    this.writeSoon.cancel();
+    const sync = this.sync;
+    this.sync = null;
+    if (!sync) return;
+    sync
+      .flush()
+      .then((r) => r === "stale" && new Notice("The note changed elsewhere, so your last edit in Time Machine wasn't saved."))
+      .catch((e) => new Notice(describeError(e)));
   }
 
   private undoNotice(message: string): void {

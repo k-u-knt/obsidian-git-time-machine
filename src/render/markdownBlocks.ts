@@ -107,24 +107,46 @@ export function segmentChunk(diff: TextDiff, seg: Segment, index: number): Chunk
 }
 
 const UNSAFE = /(^|\n)[ \t]*(```|~~~|\$\$|\|)/;
-const ATOMIC = /!?\[\[[^\]\n]*\]\]|!?\[[^\]\n]*\]\([^)\n]*\)|`[^`\n]+`|\$[^$\n]+\$|<[^>\n]+>/g;
-const BLOCK_PREFIX = /^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-*+][ \t]+(?:\[.\][ \t]+)?|\d+[.)][ \t]+(?:\[.\][ \t]+)?)*/;
+/** Kept whole, may be highlighted: links, embeds, footnote references, inline code, inline math, HTML tags. */
+const ATOMIC = /!?\[\[[^\]\n]*\]\]|!?\[[^\]\n]*\]\([^)\n]*\)|\[\^[^\]\n]*\]|`[^`\n]+`|\$[^$\n]+\$|<[^>\n]+>/g;
+/** Never highlighted, because a span would break the syntax: line prefixes (quote, heading, list, checkbox, callout header). */
+const LINE_PREFIX = /^(?:[ \t]*(?:>[ \t]?|#{1,6}[ \t]+|[-*+][ \t]+(?:\[.\][ \t]+)?|\d+[.)][ \t]+(?:\[.\][ \t]+)?|\[![^\]\n]*\][+-]?[ \t]*))+/;
+/** Never highlighted: a block id must stay the last thing on its line. */
+const BLOCK_ID = /[ \t]\^[A-Za-z0-9-]+[ \t]*$/;
+const ATOMIC_BASE = 0xe000;
+const FIXED_BASE = 0xf000;
+const FIXED_CHAR = /^[\uf000-\uf7ff]$/;
 
 /**
  * Wraps changed words in <span class="gtm-word-del|gtm-word-add"> so they can be highlighted after rendering.
- * Links, inline code, math and HTML tags are kept whole; block syntax (#, -, >, 1.) stays outside the span.
+ * Links, footnote references, inline code, math and HTML tags are kept whole. Line prefixes (list markers,
+ * checkboxes, callout headers) and block ids are never wrapped, so they still render as syntax.
  * Returns the input unchanged (marked: false) for code fences, math blocks and tables.
  */
 export function markWords(leftText: string, rightText: string): { left: string; right: string; marked: boolean } {
   if (UNSAFE.test(leftText) || UNSAFE.test(rightText)) return { left: leftText, right: rightText, marked: false };
-  const tokens: string[] = [];
+  const atomic: string[] = [];
+  const fixed: string[] = [];
+  const token = (list: string[], base: number, m: string) => {
+    let i = list.indexOf(m);
+    if (i === -1) i = list.push(m) - 1;
+    return String.fromCharCode(base + i);
+  };
   const protect = (s: string) =>
-    s.replace(ATOMIC, (m) => {
-      let i = tokens.indexOf(m);
-      if (i === -1) i = tokens.push(m) - 1;
-      return String.fromCharCode(0xe000 + i);
-    });
-  const restore = (s: string) => s.replace(/[-]/g, (c) => tokens[c.charCodeAt(0) - 0xe000]);
+    s
+      .split("\n")
+      .map((line) => {
+        const prefix = LINE_PREFIX.exec(line)?.[0] ?? "";
+        let body = line.slice(prefix.length);
+        const id = BLOCK_ID.exec(body)?.[0] ?? "";
+        body = body.slice(0, body.length - id.length).replace(ATOMIC, (m) => token(atomic, ATOMIC_BASE, m));
+        return (prefix ? token(fixed, FIXED_BASE, prefix) : "") + body + (id ? token(fixed, FIXED_BASE, id) : "");
+      })
+      .join("\n");
+  const restore = (s: string) =>
+    s
+      .replace(/[\ue000-\uefff]/g, (c) => atomic[c.charCodeAt(0) - ATOMIC_BASE])
+      .replace(/[\uf000-\uf7ff]/g, (c) => fixed[c.charCodeAt(0) - FIXED_BASE]);
   const spans = wordSpans(protect(leftText), protect(rightText));
   return {
     left: restore(wrap(spans.left, "gtm-word-del")),
@@ -133,6 +155,7 @@ export function markWords(leftText: string, rightText: string): { left: string; 
   };
 }
 
+/** Wraps each changed run, line by line, leaving fixed tokens (prefixes, block ids) outside the spans. */
 function wrap(spans: WordSpan[], cls: string): string {
   let out = "";
   for (const s of spans) {
@@ -140,22 +163,16 @@ function wrap(spans: WordSpan[], cls: string): string {
       out += s.text;
       continue;
     }
-    const startsLine = out.length === 0 || out.endsWith("\n");
     out += s.text
-      .split("\n")
-      .map((piece, idx) => {
-        let prefix = "";
-        let body = piece;
-        if (idx > 0 || startsLine) {
-          prefix = BLOCK_PREFIX.exec(piece)?.[0] ?? "";
-          body = piece.slice(prefix.length);
-        }
-        const lead = /^\s*/.exec(body)![0];
-        const core = body.slice(lead.length).replace(/\s+$/, "");
-        const trail = body.slice(lead.length + core.length);
-        return core ? `${prefix}${lead}<span class="${cls}">${core}</span>${trail}` : piece;
+      .split(/(\n|[\uf000-\uf7ff])/)
+      .map((part) => {
+        if (part === "\n" || FIXED_CHAR.test(part)) return part;
+        const lead = /^\s*/.exec(part)![0];
+        const core = part.slice(lead.length).replace(/\s+$/, "");
+        const trail = part.slice(lead.length + core.length);
+        return core ? `${lead}<span class="${cls}">${core}</span>${trail}` : part;
       })
-      .join("\n");
+      .join("");
   }
   return out;
 }

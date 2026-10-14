@@ -56,6 +56,7 @@
 .gtm-source-compare .cm-merge-b .cm-changedText, .gtm-source-compare.is-inline .cm-changedText { background: color-mix(in srgb, var(--color-green) 35%, transparent); }
 
 /* Timeline rail */
+.gtm-rail:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
 .gtm-rail { flex: 0 0 290px; overflow-y: auto; border-left: 1px solid var(--background-modifier-border); background: var(--background-secondary); padding-bottom: 16px; }
 .gtm-rail-head { padding: 14px 16px 10px; border-bottom: 1px solid var(--background-modifier-border); }
 .gtm-rail-title { font-weight: var(--font-semibold); }

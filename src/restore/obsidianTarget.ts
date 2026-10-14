@@ -2,15 +2,17 @@ import { MarkdownView, type App, type TFile } from "obsidian";
 import { StaleWriteError, type TextTarget } from "./Restorer";
 
 /**
- * Reads and writes a vault file. When the file is open in a Markdown editor, both go through that editor,
- * so what we compare is what the user sees and a restore lands in the editor's undo history (⌘Z).
+ * Reads and writes a vault file. When the file is open in an editing (source / live preview) pane, both go
+ * through that editor, so what we compare is what the user sees and a restore lands in the editor's undo
+ * history (⌘Z). A note shown only in reading view is written to the file: the reading view's hidden editor
+ * neither saves nor re-renders on its own.
  */
 export function obsidianTextTarget(app: App, file: TFile): TextTarget {
   const openEditor = (): MarkdownView | undefined =>
     app.workspace
       .getLeavesOfType("markdown")
       .map((leaf) => leaf.view)
-      .find((v): v is MarkdownView => v instanceof MarkdownView && v.file?.path === file.path);
+      .find((v): v is MarkdownView => v instanceof MarkdownView && v.file?.path === file.path && v.getMode() === "source");
 
   return {
     path: file.path,
