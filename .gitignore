@@ -1,4 +1,10 @@
 node_modules/
 main.js
+*.map
 .DS_Store
 *.log
+data.json
+.vault-path
+# Working notes (design spec, plans, manual checklists) stay local
+docs/
+.superpowers/
