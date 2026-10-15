@@ -19,7 +19,8 @@ export interface NativeCanvasCompareOptions {
   diff: CanvasDiff;
   leftLabel: string;
   state: CanvasViewState;
-  onUseText(nodeId: string): void;
+  /** Opens a focused comparison of one card's text. */
+  onCompareText(nodeId: string): void;
   onRestorePlan(plan: RestorePlan, aspects: RestoreAspects): void;
 }
 
@@ -194,7 +195,7 @@ export class NativeCanvasCompare implements CompareRenderer {
       const pastNode = diff.past.nodes.find((n) => n.id === id);
       const now = diff.current.nodes.find((n) => n.id === id);
       if (side.which === "left" && state === "edited" && pastNode?.type === "text" && now?.type === "text" && now.text !== pastNode.text) {
-        this.cardButton(el, "Use this text", () => this.o.onUseText(id));
+        this.cardButton(el, "Compare text…", () => this.o.onCompareText(id));
       }
       if (side.which === "left" && state === "removed") this.cardButton(el, pastNode?.type === "group" ? "Restore group…" : "Restore card…", () => this.tool?.selectOnly(id));
     }

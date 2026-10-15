@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseCanvas, type CanvasData } from "../../src/diff/canvasDiff";
 import { ALL_ASPECTS, type RestorePlan } from "../../src/region/restorePlan";
-import { applyCanvasPlan, formatCanvas, useCardText } from "../../src/restore/canvasWriter";
+import { applyCanvasPlan, formatCanvas } from "../../src/restore/canvasWriter";
 
 const n = (id: string, x = 0, extra: Record<string, unknown> = {}) => ({ id, type: "text", x, y: 0, width: 100, height: 50, text: id, ...extra });
 const plan = (p: Partial<RestorePlan>): RestorePlan => ({ replace: [], add: [], remove: [], skip: [], fixups: [], extraFiles: [], warnings: [], ...p });
@@ -52,11 +52,5 @@ describe("applyCanvasPlan", () => {
     const out = applyCanvasPlan(current, past, plan({ remove: ["new"] }), {});
     expect(out.nodes.map((x) => x.id)).toEqual(["bg", "a", "b"]);
     expect(out.edges).toEqual([]);
-  });
-});
-
-describe("useCardText", () => {
-  it("restores only the text", () => {
-    expect(useCardText(current, past.nodes[3]).nodes[2]).toEqual(n("b", 500, { text: "old b", color: "4" }));
   });
 });

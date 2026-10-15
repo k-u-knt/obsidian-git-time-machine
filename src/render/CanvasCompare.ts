@@ -22,7 +22,8 @@ export interface CanvasCompareOptions {
   diff: CanvasDiff;
   leftLabel: string;
   state: CanvasViewState;
-  onUseText(nodeId: string): void;
+  /** Opens a focused comparison of one card's text. */
+  onCompareText(nodeId: string): void;
   onRestorePlan(plan: RestorePlan, aspects: RestoreAspects): void;
 }
 
@@ -334,7 +335,7 @@ export class CanvasCompare implements CompareRenderer {
       body.createDiv({ cls: "gtm-cnode-file", text: n.url });
     }
     if (which === "left" && state === "edited" && n.type === "text" && other?.type === "text" && other.text !== n.text) {
-      this.cardButton(el, "Use this text", () => this.o.onUseText(n.id));
+      this.cardButton(el, "Compare text…", () => this.o.onCompareText(n.id));
     }
     if (which === "left" && state === "removed") this.cardButton(el, "Restore card…", () => this.previewRestore(n.id));
     return el;

@@ -212,3 +212,11 @@
 .gtm-ghost-content.is-now { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-green) 40%, transparent); }
 .gtm-ghost-content > :first-child { margin-top: 0; }
 .gtm-word-del + .gtm-word-add { margin-left: 0.2em; }
+
+/* Restore choices per changed block, and the card-text comparison */
+.gtm-restore-group { display: flex; flex-direction: column; gap: 4px; align-items: center; }
+.gtm-inline-actions .gtm-restore-group { flex-direction: row; }
+.gtm-restore.is-deleted:hover { background: var(--color-red); color: var(--text-on-accent); }
+.gtm-restore.is-added:hover { background: var(--color-green); color: var(--text-on-accent); }
+.gtm-back { box-shadow: none; background: transparent; color: var(--text-accent); padding: 0; height: auto; font-size: var(--font-ui-small); margin-bottom: 2px; }
+.gtm-back:hover { text-decoration: underline; }

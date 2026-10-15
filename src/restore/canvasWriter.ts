@@ -79,11 +79,6 @@ function restoreAspects(now: CanvasNode, then: CanvasNode, a: RestoreAspects, dx
   return out;
 }
 
-/** Only the card's text goes back; position, size and colour stay as they are now. */
-export function useCardText(current: CanvasData, pastNode: CanvasNode): CanvasData {
-  return { ...current, nodes: current.nodes.map((n) => (n.id === pastNode.id ? { ...n, text: pastNode.text } : n)) };
-}
-
 function insertInPastOrder<T extends { id: string }>(list: T[], pastList: T[], add: Set<string>): T[] {
   const out = [...list];
   for (let i = 0; i < pastList.length; i++) {

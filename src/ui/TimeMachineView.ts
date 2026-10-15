@@ -1,6 +1,7 @@
-import { ItemView, Notice, TFile, debounce, setIcon, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
-import { CanvasParseError, countStates, describeCanvasChanges, diffCanvas, parseCanvas, type CanvasDiff } from "../diff/canvasDiff";
+import { ItemView, Menu, Notice, TFile, debounce, setIcon, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
+import { CanvasParseError, countStates, describeCanvasChanges, diffCanvas, nodeTitle, parseCanvas, type CanvasDiff } from "../diff/canvasDiff";
 import { describeChunks, type ChangeSummary } from "../diff/describe";
+import { chunkWithMode, mergeChange, type RestoreMode } from "../diff/partialRestore";
 import { diffText, type Chunk, type TextDiff } from "../diff/textDiff";
 import type { Version } from "../history/types";
 import type GitTimeMachinePlugin from "../main";
@@ -14,7 +15,8 @@ import { MarkdownCompare } from "../render/MarkdownCompare";
 import { fileKind, looksBinary } from "../render/registry";
 import { SourceCompare } from "../render/SourceCompare";
 import type { CompareRenderer } from "../render/types";
-import { applyCanvasPlan, formatCanvas, useCardText } from "../restore/canvasWriter";
+import { applyCanvasPlan, formatCanvas } from "../restore/canvasWriter";
+import { cardTextTarget, parseCardPath } from "../restore/cardTextTarget";
 import { EditorSync } from "../restore/EditorSync";
 import { textTargetFor } from "../restore/targets";
 import { Restorer, StaleWriteError, type TextTarget } from "../restore/Restorer";
@@ -50,6 +52,8 @@ export class TimeMachineView extends ItemView {
   private canvasDiff: CanvasDiff | null = null;
   private canvasError = "";
   private canvasState: CanvasViewState = freshCanvasState();
+  /** "Compare text…": the canvas card whose text is being compared, or null. */
+  private focusCard: string | null = null;
   private lastHead: string | null = null;
   private mode: Mode;
   private layout: Layout = "split";
@@ -194,6 +198,7 @@ export class TimeMachineView extends ItemView {
     this.diff = null;
     this.canvasDiff = null;
     this.canvasState = freshCanvasState();
+    this.focusCard = null;
     this.latestText = null;
     this.selectedKey = "now";
     this.allowLarge = false;
@@ -270,8 +275,9 @@ export class TimeMachineView extends ItemView {
     // A newer selection may have finished first; never let a late result replace what's on screen.
     if (token !== this.renderToken) return;
     this.leftText = left;
-    this.diff = this.canvasMode() ? null : this.computeDiff();
     this.canvasDiff = this.kind() === "canvas" ? this.computeCanvasDiff() : null;
+    if (this.focusCard && !this.focusNode("past") && !this.focusNode("current")) this.focusCard = null;
+    this.diff = this.canvasMode() ? null : this.computeDiff();
     this.renderHeader(entry);
     this.renderTimeline();
     await this.drawCompare(entry, token);
@@ -292,8 +298,10 @@ export class TimeMachineView extends ItemView {
   }
 
   private computeDiff(): TextDiff | null {
-    if (!this.allowLarge && (this.leftText.length > LARGE_FILE_CHARS || this.liveText.length > LARGE_FILE_CHARS)) return null;
-    const diff = diffText(this.leftText, this.liveText);
+    const left = this.cmpLeft();
+    const right = this.cmpRight();
+    if (!this.allowLarge && (left.length > LARGE_FILE_CHARS || right.length > LARGE_FILE_CHARS)) return null;
+    const diff = diffText(left, right);
     const changed = diff.rows.filter((r) => r.kind !== "same").length;
     return !this.allowLarge && changed > LARGE_CHANGE_LINES ? null : diff;
   }
@@ -332,18 +340,19 @@ export class TimeMachineView extends ItemView {
       else this.messageBox(this.compareEl, "This is your note as it is now", "Pick an earlier time on the right to compare.");
       return;
     }
-    const useSource = this.mode === "source" || fileKind(this.filePath ?? "") === "text";
-    if (useSource) this.sync = new EditorSync(this.target(), this.liveText, this.kind() === "canvas" ? canvasJsonProblem : undefined);
+    const useSource = this.mode === "source" || this.kind() === "text";
+    const focus = this.focusCard !== null;
+    if (useSource) this.sync = new EditorSync(this.cmpTarget(), this.cmpRight(), this.kind() === "canvas" && !focus ? canvasJsonProblem : undefined);
     const sync = this.sync;
     this.renderer = useSource
       ? new SourceCompare({
-          left: this.leftText,
-          right: this.liveText,
+          left: this.cmpLeft(),
+          right: this.cmpRight(),
           layout: this.layout,
           chunks: () => this.diff?.chunks ?? [],
           onEdit: (text) => {
             if (!sync || this.sync !== sync) return;
-            this.liveText = text;
+            if (!focus) this.liveText = text;
             sync.edited(text);
             this.writeSoon();
           },
@@ -355,7 +364,7 @@ export class TimeMachineView extends ItemView {
           diff: this.diff,
           layout: this.layout,
           leftLabel: this.when(entry),
-          onRestore: (chunk) => void this.restoreChunk(chunk),
+          onRestore: (chunk, mode) => void this.restoreChunk(chunk, mode),
         });
     await this.renderer.render(this.compareEl);
     this.compareEl.scrollTop = scroll;
@@ -365,7 +374,15 @@ export class TimeMachineView extends ItemView {
     const h = this.headerEl;
     h.empty();
     const title = h.createDiv({ cls: "gtm-title" });
-    title.createEl("h2", { text: this.file()?.basename ?? this.filePath ?? "" });
+    if (this.focusCard) {
+      const back = title.createEl("button", { cls: "gtm-back", text: "← Back to canvas" });
+      back.addEventListener("click", () => {
+        this.focusCard = null;
+        void this.renderAll();
+      });
+      const node = this.focusNode("current") ?? this.focusNode("past");
+      title.createEl("h2", { text: `${this.file()?.basename ?? ""} · card: ${node ? nodeTitle(node) : this.focusCard}` });
+    } else title.createEl("h2", { text: this.file()?.basename ?? this.filePath ?? "" });
     const summary = title.createDiv({ cls: "gtm-summary" });
     const d = this.diff;
     const changes = this.changeSummaries();
@@ -408,9 +425,9 @@ export class TimeMachineView extends ItemView {
     const hasChanges = changes.length > 0;
     this.iconButton(controls, "chevron-up", "Previous change", hasChanges, () => this.jumpRelative(-1));
     this.iconButton(controls, "chevron-down", "Next change", hasChanges, () => this.jumpRelative(1));
-    const restore = controls.createEl("button", { cls: "gtm-restore-all", text: "Restore whole version…" });
+    const restore = controls.createEl("button", { cls: "gtm-restore-all", text: this.focusCard ? "Restore whole card text…" : "Restore whole version…" });
     restore.disabled = !entry.version || entry.isNow || !hasChanges;
-    restore.addEventListener("click", () => void this.restoreWholeVersion());
+    restore.addEventListener("click", (ev) => this.restoreMenu(ev));
   }
 
   private renderTimeline(): void {
@@ -435,6 +452,21 @@ export class TimeMachineView extends ItemView {
     if (!this.filePath || !this.ctx || !this.versions.length || !this.file()) return;
     const text = await this.target().read();
     if (text === this.liveText) return;
+    if (this.renderer instanceof SourceCompare && this.sync && this.focusCard) {
+      // Comparing one card's text: the file changed; mirror only that card's text into the editor.
+      this.liveText = text;
+      this.canvasDiff = this.computeCanvasDiff();
+      const cardText = this.cmpRight();
+      if (cardText !== this.sync.syncedText) {
+        this.sync.external(cardText);
+        this.renderer.updateRight(cardText);
+      }
+      this.diff = this.computeDiff();
+      const entry = this.selectedEntry();
+      if (entry) this.renderHeader(entry);
+      this.renderTimeline();
+      return;
+    }
     if (this.renderer instanceof SourceCompare && this.sync) {
       // Our own write landing while the user keeps typing: the editor is already ahead of the file.
       if (text === this.sync.syncedText) return;
@@ -453,23 +485,43 @@ export class TimeMachineView extends ItemView {
 
   // -------------------------------------------------------------- restoring
 
-  private async restoreChunk(chunk: Chunk): Promise<void> {
-    const result = await this.restorer.applyChunk(this.target(), this.liveText, chunk);
+  private async restoreChunk(chunk: Chunk, mode: RestoreMode = "both"): Promise<void> {
+    const result = await this.restorer.applyChunk(this.cmpTarget(), this.cmpRight(), chunkWithMode(chunk, mode));
     if (result === "stale") new Notice("The note changed, so the comparison was refreshed. Try again.");
     else if (result === "unchanged") new Notice("Nothing to restore: your note already matches.");
     else this.undoNotice("Change restored.");
     await this.refreshLive();
   }
 
-  private async restoreWholeVersion(): Promise<void> {
+  /** "Restore whole version…": restore it, or only bring back deleted text, or only remove added text. */
+  private restoreMenu(ev: MouseEvent): void {
+    // A canvas shown as a canvas restores as a whole; word-level choices are for text (notes, card text).
+    if (this.canvasMode()) {
+      void this.restoreWholeVersion("both");
+      return;
+    }
+    const menu = new Menu();
+    const items: Array<[RestoreMode, string, string]> = [
+      ["both", "Restore this version", "history"],
+      ["deleted", "Bring back all deleted text (keep additions)", "undo-2"],
+      ["added", "Remove all added text (keep deletions)", "eraser"],
+    ];
+    for (const [mode, title, icon] of items) menu.addItem((i) => i.setTitle(title).setIcon(icon).onClick(() => void this.restoreWholeVersion(mode)));
+    menu.showAtMouseEvent(ev);
+  }
+
+  private async restoreWholeVersion(mode: RestoreMode = "both"): Promise<void> {
     const entry = this.selectedEntry();
     if (!entry?.version) return;
     const unsaved = this.liveText !== this.latestText;
     const key = this.selectedKey;
     const left = this.leftText;
+    const content = mergeChange(this.cmpLeft(), this.cmpRight(), mode);
+    const what = this.focusCard ? "This card's text" : this.kind() === "canvas" ? "Your canvas" : "Your note";
+    const how = mode === "both" ? `will be replaced with the version from ${this.when(entry)}` : mode === "deleted" ? `gets back the text deleted since ${this.when(entry)}; added text stays` : `loses the text added since ${this.when(entry)}; deleted text stays deleted`;
     const ok = await confirmModal(this.app, {
-      title: "Restore this whole version?",
-      body: `Your ${this.kind() === "canvas" ? "canvas" : "note"} will be replaced with the version from ${this.when(entry)}. You can undo this from the notice or with the "Undo last restore" command.`,
+      title: mode === "both" ? "Restore this whole version?" : mode === "deleted" ? "Bring back all deleted text?" : "Remove all added text?",
+      body: `${what} ${how}. You can undo this from the notice or with the "Undo last restore" command.`,
       warning: unsaved ? `Edits made since ${timeLabel(this.versions[0].time)} aren't in the Git history yet. After this restore, only Undo can bring them back.` : undefined,
       confirmText: "Restore",
     });
@@ -478,7 +530,7 @@ export class TimeMachineView extends ItemView {
       new Notice("The selected version changed, so nothing was restored.");
       return;
     }
-    const result = await this.restorer.restoreWhole(this.target(), left);
+    const result = await this.restorer.restoreWhole(this.cmpTarget(), content);
     if (result === "stale") new Notice("The file changed while restoring, so nothing was changed. Try again.");
     else if (result === "unchanged") new Notice("Nothing to restore: it already matches that version.");
     else this.undoNotice("Version restored.");
@@ -491,13 +543,15 @@ export class TimeMachineView extends ItemView {
       new Notice("Nothing to undo.");
       return;
     }
-    const file = this.app.vault.getFileByPath(entry.path);
+    const where = parseCardPath(entry.path);
+    const file = this.app.vault.getFileByPath(where.file);
     if (!file) {
-      new Notice(`${entry.path} no longer exists.`);
+      new Notice(`${where.file} no longer exists.`);
       return;
     }
     try {
-      const result = await this.restorer.undo(textTargetFor(this.app, file), () =>
+      const base = textTargetFor(this.app, file);
+      const result = await this.restorer.undo(where.card ? cardTextTarget(base, where.card) : base, () =>
         confirmModal(this.app, {
           title: "Undo the restore?",
           body: `${file.name} was edited after the restore. Undoing will also remove those later edits.`,
@@ -527,6 +581,8 @@ export class TimeMachineView extends ItemView {
       new Notice("The note changed elsewhere, so your last edit here wasn't saved. The comparison now shows the current note.");
       await this.refreshLive();
     } else if (result === "written") {
+      // Comparing a card's text: the refresh after the file change recomputes from the canvas.
+      if (this.focusCard) return;
       this.diff = diffText(this.leftText, this.liveText);
       const entry = this.selectedEntry();
       if (entry) this.renderHeader(entry);
@@ -593,7 +649,27 @@ export class TimeMachineView extends ItemView {
 
   /** A canvas shown as a canvas (not as Source text). */
   private canvasMode(): boolean {
-    return this.kind() === "canvas" && this.mode === "rendered";
+    return this.kind() === "canvas" && this.mode === "rendered" && this.focusCard === null;
+  }
+
+  /** The focused card in the past or current canvas. */
+  private focusNode(which: "past" | "current") {
+    if (!this.focusCard || !this.canvasDiff) return undefined;
+    return this.canvasDiff[which].nodes.find((n) => n.id === this.focusCard);
+  }
+
+  /** What the comparison compares: the file's text, or (Compare text…) the focused card's text. */
+  private cmpLeft(): string {
+    return this.focusCard ? (this.focusNode("past")?.text ?? "") : this.leftText;
+  }
+
+  private cmpRight(): string {
+    return this.focusCard ? (this.focusNode("current")?.text ?? "") : this.liveText;
+  }
+
+  /** Where restores and Source-mode edits go: the file, or only the focused card's text. */
+  private cmpTarget(): TextTarget {
+    return this.focusCard ? cardTextTarget(this.target(), this.focusCard) : this.target();
   }
 
   /** The "Changes in this version" list, for whichever comparison is showing. */
@@ -635,7 +711,7 @@ export class TimeMachineView extends ItemView {
         diff: this.canvasDiff,
         leftLabel: this.when(entry),
         state: this.canvasState,
-        onUseText: (id) => void this.restoreCardText(id),
+        onCompareText: (id) => this.compareCardText(id),
         onRestorePlan: (plan, keep) => void this.restoreCanvasPlan(plan, keep),
       });
       this.renderer = native;
@@ -649,7 +725,7 @@ export class TimeMachineView extends ItemView {
       diff: this.canvasDiff,
       leftLabel: this.when(entry),
       state: this.canvasState,
-      onUseText: (id) => void this.restoreCardText(id),
+      onCompareText: (id) => this.compareCardText(id),
       onRestorePlan: (plan, keep) => void this.restoreCanvasPlan(plan, keep),
     });
     this.renderer = next;
@@ -683,22 +759,13 @@ export class TimeMachineView extends ItemView {
     await this.refreshLive();
   }
 
-  private async restoreCardText(id: string): Promise<void> {
-    const node = this.canvasDiff?.past.nodes.find((n) => n.id === id);
-    if (!node) return;
-    const expected = this.liveText;
-    let next: string;
-    try {
-      next = formatCanvas(useCardText(parseCanvas(expected), node));
-    } catch (e) {
-      new Notice(describeError(e));
-      return;
-    }
-    const result = await this.restorer.replaceText(this.target(), expected, next);
-    if (result === "stale") new Notice("The canvas changed, so the comparison was refreshed. Try again.");
-    else if (result === "unchanged") new Notice("Nothing to restore: the card already has this text.");
-    else this.undoNotice("Card text restored.");
-    await this.refreshLive();
+  /** "Compare text…": compare one card's text like a note, with the same restore choices. */
+  private compareCardText(id: string): void {
+    this.flushEditorNow();
+    this.focusCard = id;
+    this.mode = "rendered";
+    this.changeCursor = -1;
+    void this.renderAll();
   }
 
   /** Brings back a vault file (e.g. a file card's note) as it was at `hash`. Never overwrites an existing file. */

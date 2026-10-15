@@ -45,7 +45,7 @@ function make(restored: unknown[] = []) {
     diff: diffCanvas(past, current),
     leftLabel: "Today, 10:53",
     state,
-    onUseText: () => {},
+    onCompareText: () => {},
     onRestorePlan: (plan: unknown) => void restored.push(plan),
   });
   return { host, cc, state };
@@ -99,10 +99,10 @@ describe("CanvasCompare", () => {
     expect(host.querySelector(".gtm-region-title")?.textContent).toBe("Restore 2 items: 2 come back");
   });
 
-  it("offers 'Use this text' only when the text itself changed", async () => {
+  it("offers 'Compare text…' only when the text itself changed", async () => {
     const { host } = await draw();
     const labels = [...host.querySelectorAll(".gtm-canvas-pane.is-left .gtm-cnode-action")].map((b) => b.textContent);
-    expect(labels.filter((l) => l === "Use this text")).toHaveLength(1);
+    expect(labels.filter((l) => l === "Compare text…")).toHaveLength(1);
   });
 
   it("leaves the screen and the saved scroll position alone when a redraw is replaced before it finishes", async () => {

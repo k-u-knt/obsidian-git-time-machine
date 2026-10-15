@@ -75,7 +75,7 @@ describe("NativeCanvasCompare", () => {
       diff: diffCanvas(past, current),
       leftLabel: "Today, 10:53",
       state: { zoom: null, scrollLeft: 0, scrollTop: 0, region: defaultRegionState() },
-      onUseText: () => {},
+      onCompareText: () => {},
       onRestorePlan: () => {},
     });
     await cmp.render(host);
@@ -86,7 +86,7 @@ describe("NativeCanvasCompare", () => {
     const rightTags = [...made[1].wrapperEl.querySelectorAll(".gtm-n-tag")].map((t) => t.textContent);
     expect(leftTags).toEqual(["Edited", "Removed"]);
     expect(rightTags).toEqual(["Edited", "Added"]);
-    expect([...made[0].wrapperEl.querySelectorAll(".gtm-n-action")].map((b) => b.textContent)).toEqual(["Use this text", "Restore card…"]);
+    expect([...made[0].wrapperEl.querySelectorAll(".gtm-n-action")].map((b) => b.textContent)).toEqual(["Compare text…", "Restore card…"]);
     cmp.destroy();
     expect(made.every((e) => !e.loaded)).toBe(true);
   });
@@ -206,7 +206,7 @@ async function drawSimple(restored: unknown[] = []) {
     diff: diffCanvas(past, current),
     leftLabel: "Today, 10:53",
     state: { zoom: null, scrollLeft: 0, scrollTop: 0, region: defaultRegionState() },
-    onUseText: () => {},
+    onCompareText: () => {},
     onRestorePlan: (plan: unknown) => void restored.push(plan),
   });
   await cmp.render(host);
