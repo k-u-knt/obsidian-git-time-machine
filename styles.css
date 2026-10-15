@@ -210,3 +210,4 @@
 .gtm-ghost-content.is-past { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-red) 40%, transparent); }
 .gtm-ghost-content.is-now { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-green) 40%, transparent); }
 .gtm-ghost-content > :first-child { margin-top: 0; }
+.gtm-word-del + .gtm-word-add { margin-left: 0.2em; }

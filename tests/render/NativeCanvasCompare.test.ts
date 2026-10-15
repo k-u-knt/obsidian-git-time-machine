@@ -137,20 +137,19 @@ describe("NativeCanvasCompare", () => {
     cmp.destroy();
   });
 
-  it("shows the old text in a past ghost and the new text in a current ghost, with changed words highlighted", async () => {
+  it("shows deleted and added words together in both ghosts", async () => {
     made.length = 0;
     const { host, cmp } = await drawSimple();
+    const words = (el: Element, cls: string) => [...el.querySelectorAll(cls)].map((w) => w.textContent);
     click(host, "left", 910, 10);
     await frame();
-    const old = host.querySelector(".gtm-canvas-pane.is-right .gtm-marks .gtm-ghost-content")!;
-    expect(old.textContent).toBe("Hi-C on twelve samples");
-    expect(old.querySelectorAll(".gtm-word-del, .gtm-word-add")).toHaveLength(0);
+    const past = host.querySelector(".gtm-canvas-pane.is-right .gtm-marks .gtm-ghost-content")!;
+    expect(words(past, ".gtm-word-del")).toEqual(["twelve"]);
+    expect(words(past, ".gtm-word-add")).toEqual(["and imaging", "ten"]);
     click(host, "right", 910, 610);
     await frame();
     const now = host.querySelector(".gtm-canvas-pane.is-left .gtm-marks .gtm-ghost-content")!;
-    expect(now.textContent).toBe("Hi-C and imaging on twelve samples");
-    expect([...now.querySelectorAll(".gtm-word-add")].map((w) => w.textContent)).toEqual(["and imaging"]);
-    expect(host.querySelectorAll(".gtm-canvas-pane.is-right .gtm-marks .gtm-ghost-content")).toHaveLength(0);
+    expect(now.innerHTML).toBe(past.innerHTML);
     cmp.destroy();
   });
 });
@@ -177,7 +176,7 @@ function click(host: HTMLElement, side: "left" | "right", x: number, y: number) 
 async function drawSimple() {
   const past = { nodes: [card("a", 0, "anchor"), card("m", 300, "moved me"), card("e", 900, "Hi-C on twelve samples")], edges: [] };
   const current = {
-    nodes: [card("a", 0, "anchor"), { ...card("m", 300, "moved me"), y: 400 }, { ...card("e", 900, "Hi-C and imaging on twelve samples"), y: 600 }],
+    nodes: [card("a", 0, "anchor"), { ...card("m", 300, "moved me"), y: 400 }, { ...card("e", 900, "Hi-C and imaging on ten samples"), y: 600 }],
     edges: [],
   };
   const host = document.body.createDiv();

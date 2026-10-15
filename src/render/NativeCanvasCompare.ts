@@ -6,7 +6,7 @@ import { expandSelection, itemAt } from "../region/selection";
 import { RegionTool, type Tool } from "../region/RegionTool";
 import type { RestorePlan } from "../region/restorePlan";
 import type { CanvasViewState } from "./CanvasCompare";
-import { markWords } from "./markdownBlocks";
+import { markInline } from "./markdownBlocks";
 import { createReadonlyCanvas, type NativeCanvas, type NativeCanvasKit } from "./nativeCanvas";
 import type { CompareRenderer } from "./types";
 
@@ -311,14 +311,12 @@ export class NativeCanvasCompare implements CompareRenderer {
     void MarkdownRenderer.render(this.o.app, markdown, content, this.o.file.path, this.ghostComponent ?? this.o.parent);
   }
 
-  /** The card's text then (`past`) or now (`now`); edited text gets the same word highlights as notes. */
+  /** The card's text then (`past`) or now (`now`); edited text shows deletions and additions together. */
   private ghostMarkdown(id: string, kind: "past" | "now"): string {
     const p = this.o.diff.past.nodes.find((n) => n.id === id);
     const c = this.o.diff.current.nodes.find((n) => n.id === id);
-    if (p?.type === "text" && c?.type === "text" && p.text !== c.text) {
-      const m = markWords(p.text ?? "", c.text ?? "");
-      return kind === "past" ? m.left : m.right;
-    }
+    // Edited text: both ghosts show old and new together, deletions and additions highlighted.
+    if (p?.type === "text" && c?.type === "text" && p.text !== c.text) return markInline(p.text ?? "", c.text ?? "");
     const n = kind === "past" ? p : c;
     if (!n) return "";
     return n.type === "text" ? (n.text ?? "") : `**${nodeTitle(n)}**`;

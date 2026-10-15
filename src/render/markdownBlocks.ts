@@ -1,3 +1,4 @@
+import { diffWordsWithSpace } from "diff";
 import { wordSpans, type Chunk, type Row, type TextDiff, type WordSpan } from "../diff/textDiff";
 
 /**
@@ -125,6 +126,61 @@ const FIXED_CHAR = /^[\uf000-\uf7ff]$/;
  */
 export function markWords(leftText: string, rightText: string): { left: string; right: string; marked: boolean } {
   if (UNSAFE.test(leftText) || UNSAFE.test(rightText)) return { left: leftText, right: rightText, marked: false };
+  const { protect, restore } = protector();
+  const spans = wordSpans(protect(leftText), protect(rightText));
+  return {
+    left: restore(wrap(spans.left, "gtm-word-del")),
+    right: restore(wrap(spans.right, "gtm-word-add")),
+    marked: true,
+  };
+}
+
+/**
+ * One text showing both versions at once, like tracked changes: deleted words (gtm-word-del) followed by the
+ * words that replaced them (gtm-word-add). Only today's line prefixes are kept (a ticked checkbox stays one
+ * checkbox). Code fences, math blocks and tables fall back to today's text.
+ */
+export function markInline(oldText: string, newText: string): string {
+  if (UNSAFE.test(oldText) || UNSAFE.test(newText)) return newText;
+  const { protect, restore } = protector();
+  const parts = diffWordsWithSpace(protect(oldText), protect(newText));
+  const spans: WordSpan[] = [];
+  const isSpace = (t: string) => /^[ \t]+$/.test(t);
+  for (let i = 0; i < parts.length; ) {
+    const p = parts[i];
+    if (!p.added && !p.removed) {
+      spans.push({ text: p.value, kind: "same" });
+      i++;
+      continue;
+    }
+    // A run of changes (spaces between changed words included) becomes "deleted text" then "added text".
+    let del = "";
+    let add = "";
+    for (; i < parts.length; i++) {
+      const q = parts[i];
+      if (q.added) add += q.value;
+      else if (q.removed) del += q.value;
+      else if (isSpace(q.value) && i + 1 < parts.length && (parts[i + 1].added || parts[i + 1].removed)) {
+        del += q.value;
+        add += q.value;
+      } else break;
+    }
+    if (del.trim()) spans.push({ text: del, kind: "removed" });
+    if (add.trim()) spans.push({ text: add, kind: "added" });
+    else if (!del.trim() && add) spans.push({ text: add, kind: "same" });
+  }
+  let out = "";
+  for (const s of spans) {
+    if (s.kind === "same") out += s.text;
+    else if (s.kind === "added") out += wrap([s], "gtm-word-add");
+    // Deleted line prefixes (e.g. an unticked checkbox) are dropped so the line still renders once.
+    else out += wrap([{ ...s, text: s.text.replace(/[\uf000-\uf7ff]/g, "") }], "gtm-word-del");
+  }
+  return restore(out);
+}
+
+/** Replaces links/code (kept whole) and line prefixes/block ids (never wrapped) with placeholder characters. */
+function protector(): { protect(s: string): string; restore(s: string): string } {
   const atomic: string[] = [];
   const fixed: string[] = [];
   const token = (list: string[], base: number, m: string) => {
@@ -132,26 +188,22 @@ export function markWords(leftText: string, rightText: string): { left: string; 
     if (i === -1) i = list.push(m) - 1;
     return String.fromCharCode(base + i);
   };
-  const protect = (s: string) =>
-    s
-      .split("\n")
-      .map((line) => {
-        const prefix = LINE_PREFIX.exec(line)?.[0] ?? "";
-        let body = line.slice(prefix.length);
-        const id = BLOCK_ID.exec(body)?.[0] ?? "";
-        body = body.slice(0, body.length - id.length).replace(ATOMIC, (m) => token(atomic, ATOMIC_BASE, m));
-        return (prefix ? token(fixed, FIXED_BASE, prefix) : "") + body + (id ? token(fixed, FIXED_BASE, id) : "");
-      })
-      .join("\n");
-  const restore = (s: string) =>
-    s
-      .replace(/[\ue000-\uefff]/g, (c) => atomic[c.charCodeAt(0) - ATOMIC_BASE])
-      .replace(/[\uf000-\uf7ff]/g, (c) => fixed[c.charCodeAt(0) - FIXED_BASE]);
-  const spans = wordSpans(protect(leftText), protect(rightText));
   return {
-    left: restore(wrap(spans.left, "gtm-word-del")),
-    right: restore(wrap(spans.right, "gtm-word-add")),
-    marked: true,
+    protect: (s) =>
+      s
+        .split("\n")
+        .map((line) => {
+          const prefix = LINE_PREFIX.exec(line)?.[0] ?? "";
+          let body = line.slice(prefix.length);
+          const id = BLOCK_ID.exec(body)?.[0] ?? "";
+          body = body.slice(0, body.length - id.length).replace(ATOMIC, (m) => token(atomic, ATOMIC_BASE, m));
+          return (prefix ? token(fixed, FIXED_BASE, prefix) : "") + body + (id ? token(fixed, FIXED_BASE, id) : "");
+        })
+        .join("\n"),
+    restore: (s) =>
+      s
+        .replace(/[\ue000-\uefff]/g, (c) => atomic[c.charCodeAt(0) - ATOMIC_BASE])
+        .replace(/[\uf000-\uf7ff]/g, (c) => fixed[c.charCodeAt(0) - FIXED_BASE]),
   };
 }
 
