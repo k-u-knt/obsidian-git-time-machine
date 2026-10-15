@@ -59,8 +59,10 @@ export class NativeCanvasCompare implements CompareRenderer {
 
   async render(host: HTMLElement): Promise<void> {
     const { diff, state } = this.o;
-    host.empty();
-    const root = host.createDiv({ cls: "gtm-canvas-compare gtm-native", attr: { tabindex: "-1" } });
+    const native = (state.native ??= { view: null, pickedSide: "left" });
+    const pickedRight = native.pickedSide === "right" && state.region.selected.length > 0;
+    // Built off-screen and swapped in when complete, so a refresh doesn't flash an empty tab.
+    const root = createDiv({ cls: "gtm-canvas-compare gtm-native", attr: { tabindex: "-1" } });
     root.addEventListener("keydown", (ev) => ev.key === "Escape" && this.tool?.clear());
 
     const toolbar = root.createDiv({ cls: "gtm-canvas-toolbar" });
@@ -113,11 +115,24 @@ export class NativeCanvasCompare implements CompareRenderer {
       },
       onChange: (selected, plan) => {
         this.plan = plan;
-        if (!this.fromRight) this.visual = { side: "left", ids: new Set(selected) };
+        if (!this.fromRight) this.pick("left", selected);
       },
       onRestore: (plan, aspects) => this.o.onRestorePlan(plan, aspects),
     });
     this.setTool(state.region.tool);
+    if (pickedRight) this.pick("right", state.region.selected);
+    host.empty();
+    host.appendChild(root);
+    for (const s of [this.left, this.right]) s.canvas.onResize();
+    if (native.view) {
+      this.left.canvas.setState(native.view);
+      this.right.canvas.setState(this.shifted(native.view, 1));
+    } else {
+      for (const s of [this.left, this.right]) {
+        s.canvas.zoomToFitQueued = true;
+        s.canvas.onResize();
+      }
+    }
     // Obsidian's canvas measures its pane on resize; keep it informed as the tab or sidebar changes size.
     if (typeof ResizeObserver !== "undefined") {
       this.resizeObserver = new ResizeObserver(() => {
@@ -157,8 +172,7 @@ export class NativeCanvasCompare implements CompareRenderer {
     if (this.ghostComponent) this.o.parent.removeChild(this.ghostComponent);
     for (const s of [this.left, this.right]) {
       if (!s) continue;
-      const st = s.canvas.getState();
-      if (s.which === "left") this.o.state.zoom = st.zoom;
+      if (s.which === "left") this.saveView();
       s.canvas.unload();
     }
   }
@@ -225,24 +239,48 @@ export class NativeCanvasCompare implements CompareRenderer {
     });
   }
 
-  /** Each frame: link pan/zoom between the sides, keep overlays aligned, mark newly drawn cards. */
+  /** A view moved by the anchor shift: `sign` 1 maps past → current, -1 current → past. */
+  private shifted(v: { x: number; y: number; zoom: number }, sign: 1 | -1): { x: number; y: number; zoom: number } {
+    const { dx, dy } = this.o.diff.anchor;
+    return { x: v.x + sign * dx, y: v.y + sign * dy, zoom: v.zoom };
+  }
+
+  private pick(side: "left" | "right", ids: Iterable<string>): void {
+    this.visual = { side, ids: new Set(ids) };
+    this.o.state.native!.pickedSide = side;
+  }
+
+  private saveView(): void {
+    this.o.state.native!.view = this.left.canvas.getState();
+  }
+
+  /**
+   * Each frame: link pan/zoom between the sides (through the anchor shift, so unchanged cards line up), keep
+   * overlays aligned, mark newly drawn cards, and keep both canvases locked.
+   */
   private loop(): void {
     if (this.destroyed) return;
     const l = this.left.canvas.getState();
     const r = this.right.canvas.getState();
     const lk = JSON.stringify(l);
     const rk = JSON.stringify(r);
-    if (lk !== this.lastLeft && lk !== rk) {
-      this.right.canvas.setState(l);
-      this.lastLeft = this.lastRight = lk;
-    } else if (rk !== this.lastRight && lk !== rk) {
-      this.left.canvas.setState(r);
-      this.lastLeft = this.lastRight = rk;
+    const want = this.shifted(l, 1);
+    const linked = Math.abs(want.x - r.x) < 1e-6 && Math.abs(want.y - r.y) < 1e-6 && Math.abs(want.zoom - r.zoom) < 1e-6;
+    if (!linked && lk !== this.lastLeft) {
+      this.right.canvas.setState(want);
+      this.lastLeft = lk;
+      this.lastRight = JSON.stringify(this.right.canvas.getState());
+    } else if (!linked && rk !== this.lastRight) {
+      this.left.canvas.setState(this.shifted(r, -1));
+      this.lastRight = rk;
+      this.lastLeft = JSON.stringify(this.left.canvas.getState());
     } else {
       this.lastLeft = lk;
       this.lastRight = rk;
     }
+    this.saveView();
     for (const s of [this.left, this.right]) {
+      if (s.canvas.readonly === false) s.canvas.setReadonly(true);
       const bb = s.canvas.getViewportBBox();
       const box = `${bb.minX} ${bb.minY} ${bb.maxX - bb.minX} ${bb.maxY - bb.minY}`;
       s.marks.setAttr("viewBox", box);
@@ -355,7 +393,7 @@ export class NativeCanvasCompare implements CompareRenderer {
       const ids = new Set(ev.shiftKey && this.visual.side === "right" ? this.visual.ids : []);
       if (ev.shiftKey && id && ids.has(id)) for (const x of picked) ids.delete(x);
       else for (const x of picked) ids.add(x);
-      this.visual = { side: "right", ids };
+      this.pick("right", ids);
       this.fromRight = true;
       try {
         this.tool?.selectIds([...ids]);
@@ -367,7 +405,7 @@ export class NativeCanvasCompare implements CompareRenderer {
 
   private fit(): void {
     this.left.canvas.zoomToFit();
-    this.right.canvas.setState(this.left.canvas.getState());
+    this.right.canvas.setState(this.shifted(this.left.canvas.getState(), 1));
   }
 
   private setTool(tool: Tool): void {

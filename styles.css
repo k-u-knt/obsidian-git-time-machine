@@ -161,6 +161,8 @@
 .gtm-native-body { position: relative; flex: 1; min-height: 0; overflow: hidden; --gtm-zoom: 1; }
 .gtm-native-host { position: absolute; inset: 0; }
 .gtm-native-host > .canvas-wrapper { position: absolute; inset: 0; }
+/* Both canvases stay read-only: no lock toggle, no card menu (colour, delete…). */
+.gtm-native .canvas-controls, .gtm-native .canvas-card-menu { display: none !important; }
 .gtm-native-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; z-index: 50; }
 .gtm-native-body.is-drawing-tool .gtm-native-overlay { pointer-events: all; cursor: crosshair; }
 .canvas-node.gtm-n { outline-style: solid; outline-width: calc(3px / var(--gtm-zoom)); outline-offset: calc(2px / var(--gtm-zoom)); border-radius: var(--radius-m); }

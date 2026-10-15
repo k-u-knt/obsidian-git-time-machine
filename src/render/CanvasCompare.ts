@@ -13,6 +13,8 @@ export interface CanvasViewState {
   scrollLeft: number;
   scrollTop: number;
   region: RegionState;
+  /** Obsidian's canvas engine: the past side's view (its own units), and which side the pick was made on. */
+  native?: { view: { x: number; y: number; zoom: number } | null; pickedSide: "left" | "right" };
 }
 
 export interface CanvasCompareOptions {

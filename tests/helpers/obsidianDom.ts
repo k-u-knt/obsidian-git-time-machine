@@ -67,6 +67,8 @@ export function installObsidianDom(): void {
       else this.setAttribute(k, String(v));
     },
   });
+  // Obsidian's global createDiv: a detached element.
+  (globalThis as unknown as { createDiv: Function }).createDiv = (o?: Info) => apply(document.createElement("div"), o);
   if (!Element.prototype.scrollTo) Element.prototype.scrollTo = function () {};
   if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = function () {};
 }

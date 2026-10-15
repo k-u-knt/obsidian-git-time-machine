@@ -29,7 +29,8 @@ beforeAll(() => installObsidianDom());
 /** Stand-in for Obsidian's canvas engine: records how it is used and draws one element per card. */
 const made: FakeEngine[] = [];
 class FakeEngine {
-  host: { requestSave(): void; contentEl: HTMLElement };
+  host: { requestSave(): void; saveLocalData?(): void; contentEl: HTMLElement };
+  view = { x: 0, y: 0, zoom: 0 };
   readonly = false;
   loaded = false;
   scale = 0.5;
@@ -50,10 +51,10 @@ class FakeEngine {
   }
   setReadonly(r: boolean) { this.readonly = r; }
   onResize() {}
-  zoomToFit() {}
+  zoomToFit() { this.view = { x: 50, y: 50, zoom: -1 }; }
   zoomToBbox() {}
-  getState() { return { x: 0, y: 0, zoom: 0 }; }
-  setState() {}
+  getState() { return { ...this.view }; }
+  setState(v: FakeEngine["view"]) { this.view = { ...v }; }
   getViewportBBox() { return { minX: 0, minY: 0, maxX: 100, maxY: 100 }; }
   posFromEvt(ev: MouseEvent) { return { x: ev.clientX, y: ev.clientY }; }
   requestFrame() {}
@@ -173,6 +174,62 @@ describe("NativeCanvasCompare", () => {
   });
 });
 
+describe("NativeCanvasCompare keeps the vault safe and the view steady", () => {
+  it("lets nothing be dropped onto, duplicated in or unlocked in the read-only canvases", async () => {
+    made.length = 0;
+    const { cmp } = await drawSimple();
+    for (const e of made) {
+      expect(e.host.saveLocalData?.()).toBeUndefined();
+      const reached: string[] = [];
+      for (const t of ["dragover", "drop", "pointerdown"]) e.wrapperEl.addEventListener(t, () => reached.push(t));
+      e.wrapperEl.dispatchEvent(new Event("dragover", { bubbles: true, cancelable: true }));
+      e.wrapperEl.dispatchEvent(new Event("drop", { bubbles: true, cancelable: true }));
+      e.wrapperEl.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, altKey: true }));
+      e.wrapperEl.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, metaKey: true }));
+      expect(reached).toEqual([]);
+      e.wrapperEl.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+      expect(reached).toEqual(["pointerdown"]);
+      e.readonly = false; // e.g. the canvas's own lock button
+    }
+    await frame();
+    expect(made.every((e) => e.readonly)).toBe(true);
+    cmp.destroy();
+  });
+
+  it("links pan and zoom through the anchor shift, both ways", async () => {
+    made.length = 0;
+    const past = { nodes: [card("a", 0, "one"), card("b", 300, "two")], edges: [] };
+    const current = { nodes: [card("a", 100, "one"), card("b", 400, "two")], edges: [] };
+    const { cmp } = await drawSimple([], { past, current });
+    made[0].setState({ x: 10, y: 20, zoom: -1 });
+    await frame();
+    expect(made[1].getState()).toEqual({ x: 110, y: 20, zoom: -1 });
+    made[1].setState({ x: 500, y: 40, zoom: 0.5 });
+    await frame();
+    expect(made[0].getState()).toEqual({ x: 400, y: 40, zoom: 0.5 });
+    cmp.destroy();
+  });
+
+  it("never touches the fallback's zoom, and a rebuild keeps the view and a current-side pick", async () => {
+    made.length = 0;
+    const state = { zoom: null, scrollLeft: 0, scrollTop: 0, region: defaultRegionState() };
+    const first = await drawSimple([], { state });
+    made[0].setState({ x: 7, y: 8, zoom: -2 });
+    click(first.host, "right", 310, 410);
+    await frame();
+    first.cmp.destroy();
+    expect(state.zoom).toBeNull();
+    const second = await drawSimple([], { state });
+    await frame();
+    expect(made[2].getState()).toEqual({ x: 7, y: 8, zoom: -2 });
+    expect(made[3].getState()).toEqual({ x: 7, y: 8, zoom: -2 });
+    expect(made[2].zoomToFitQueued || made[3].zoomToFitQueued).toBe(false);
+    expect(dimmed(made[3])).toEqual(["a", "e"]);
+    expect(dimmed(made[2])).toEqual([]);
+    second.cmp.destroy();
+  });
+});
+
 const dimmed = (e: FakeEngine) => [...e.nodes].filter(([, n]) => n.nodeEl.classList.contains("gtm-n-dim")).map(([id]) => id);
 
 /** Card m moved from y=0 to y=400: the arrow runs from its past centre to its current centre, red fading to green. */
@@ -192,9 +249,9 @@ function click(host: HTMLElement, side: "left" | "right", x: number, y: number) 
   for (const type of ["pointerdown", "pointerup"]) body.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 }));
 }
 
-async function drawSimple(restored: unknown[] = []) {
-  const past = { nodes: [card("a", 0, "anchor"), card("m", 300, "moved me"), card("e", 900, "Hi-C on twelve samples")], edges: [] };
-  const current = {
+async function drawSimple(restored: unknown[] = [], o: { past?: unknown; current?: unknown; state?: unknown } = {}) {
+  const simplePast = { nodes: [card("a", 0, "anchor"), card("m", 300, "moved me"), card("e", 900, "Hi-C on twelve samples")], edges: [] };
+  const simpleCurrent = {
     nodes: [card("a", 0, "anchor"), { ...card("m", 300, "moved me"), y: 400 }, { ...card("e", 900, "Hi-C and imaging on ten samples"), y: 600 }],
     edges: [],
   };
@@ -204,9 +261,9 @@ async function drawSimple(restored: unknown[] = []) {
     kit: { Engine: FakeEngine as never, plugin: {} },
     file: { path: "map.canvas" } as never,
     parent: { addChild: (c: unknown) => c, removeChild: () => {} } as never,
-    diff: diffCanvas(past, current),
+    diff: diffCanvas((o.past ?? simplePast) as never, (o.current ?? simpleCurrent) as never),
     leftLabel: "Today, 10:53",
-    state: { zoom: null, scrollLeft: 0, scrollTop: 0, region: defaultRegionState() },
+    state: (o.state ?? { zoom: null, scrollLeft: 0, scrollTop: 0, region: defaultRegionState() }) as never,
     onCompareText: () => {},
     onRestorePlan: (plan: unknown) => void restored.push(plan),
   });
