@@ -194,7 +194,7 @@ export class NativeCanvasCompare implements CompareRenderer {
       el.createDiv({ cls: "gtm-n-tag", text: this.tagFor(id, state) });
       const pastNode = diff.past.nodes.find((n) => n.id === id);
       const now = diff.current.nodes.find((n) => n.id === id);
-      if (side.which === "left" && state === "edited" && pastNode?.type === "text" && now?.type === "text" && now.text !== pastNode.text) {
+      if (state === "edited" && pastNode?.type === "text" && now?.type === "text" && now.text !== pastNode.text) {
         this.cardButton(el, "Compare text…", () => this.o.onCompareText(id));
       }
       if (side.which === "left" && state === "removed") this.cardButton(el, pastNode?.type === "group" ? "Restore group…" : "Restore card…", () => this.tool?.selectOnly(id));

@@ -87,6 +87,7 @@ describe("NativeCanvasCompare", () => {
     expect(leftTags).toEqual(["Edited", "Removed"]);
     expect(rightTags).toEqual(["Edited", "Added"]);
     expect([...made[0].wrapperEl.querySelectorAll(".gtm-n-action")].map((b) => b.textContent)).toEqual(["Compare text…", "Restore card…"]);
+    expect([...made[1].wrapperEl.querySelectorAll(".gtm-n-action")].map((b) => b.textContent)).toEqual(["Compare text…"]);
     cmp.destroy();
     expect(made.every((e) => !e.loaded)).toBe(true);
   });

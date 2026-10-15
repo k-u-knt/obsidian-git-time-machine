@@ -103,6 +103,8 @@ describe("CanvasCompare", () => {
     const { host } = await draw();
     const labels = [...host.querySelectorAll(".gtm-canvas-pane.is-left .gtm-cnode-action")].map((b) => b.textContent);
     expect(labels.filter((l) => l === "Compare text…")).toHaveLength(1);
+    const right = [...host.querySelectorAll(".gtm-canvas-pane.is-right .gtm-cnode-action")].map((b) => b.textContent);
+    expect(right.filter((l) => l === "Compare text…")).toHaveLength(1);
   });
 
   it("leaves the screen and the saved scroll position alone when a redraw is replaced before it finishes", async () => {

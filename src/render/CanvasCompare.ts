@@ -334,7 +334,7 @@ export class CanvasCompare implements CompareRenderer {
     } else if (n.type === "link" && n.url) {
       body.createDiv({ cls: "gtm-cnode-file", text: n.url });
     }
-    if (which === "left" && state === "edited" && n.type === "text" && other?.type === "text" && other.text !== n.text) {
+    if (state === "edited" && n.type === "text" && other?.type === "text" && other.text !== n.text) {
       this.cardButton(el, "Compare text…", () => this.o.onCompareText(n.id));
     }
     if (which === "left" && state === "removed") this.cardButton(el, "Restore card…", () => this.previewRestore(n.id));
