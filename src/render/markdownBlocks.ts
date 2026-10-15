@@ -1,4 +1,5 @@
 import { diffWordsWithSpace } from "diff";
+import { markdownProtector } from "../diff/markdownTokens";
 import { wordSpans, type Chunk, type Row, type TextDiff, type WordSpan } from "../diff/textDiff";
 
 /**
@@ -108,14 +109,6 @@ export function segmentChunk(diff: TextDiff, seg: Segment, index: number): Chunk
 }
 
 const UNSAFE = /(^|\n)[ \t]*(```|~~~|\$\$|\|)/;
-/** Kept whole, may be highlighted: links, embeds, footnote references, inline code, inline math, HTML tags. */
-const ATOMIC = /!?\[\[[^\]\n]*\]\]|!?\[[^\]\n]*\]\([^)\n]*\)|\[\^[^\]\n]*\]|`[^`\n]+`|\$[^$\n]+\$|<[^>\n]+>/g;
-/** Never highlighted, because a span would break the syntax: line prefixes (quote, heading, list, checkbox, callout header). */
-const LINE_PREFIX = /^(?:[ \t]*(?:>[ \t]?|#{1,6}[ \t]+|[-*+][ \t]+(?:\[.\][ \t]+)?|\d+[.)][ \t]+(?:\[.\][ \t]+)?|\[![^\]\n]*\][+-]?[ \t]*))+/;
-/** Never highlighted: a block id must stay the last thing on its line. */
-const BLOCK_ID = /[ \t]\^[A-Za-z0-9-]+[ \t]*$/;
-const ATOMIC_BASE = 0xe000;
-const FIXED_BASE = 0xf000;
 const FIXED_CHAR = /^[\uf000-\uf7ff]$/;
 
 /**
@@ -179,33 +172,7 @@ export function markInline(oldText: string, newText: string): string {
   return restore(out);
 }
 
-/** Replaces links/code (kept whole) and line prefixes/block ids (never wrapped) with placeholder characters. */
-function protector(): { protect(s: string): string; restore(s: string): string } {
-  const atomic: string[] = [];
-  const fixed: string[] = [];
-  const token = (list: string[], base: number, m: string) => {
-    let i = list.indexOf(m);
-    if (i === -1) i = list.push(m) - 1;
-    return String.fromCharCode(base + i);
-  };
-  return {
-    protect: (s) =>
-      s
-        .split("\n")
-        .map((line) => {
-          const prefix = LINE_PREFIX.exec(line)?.[0] ?? "";
-          let body = line.slice(prefix.length);
-          const id = BLOCK_ID.exec(body)?.[0] ?? "";
-          body = body.slice(0, body.length - id.length).replace(ATOMIC, (m) => token(atomic, ATOMIC_BASE, m));
-          return (prefix ? token(fixed, FIXED_BASE, prefix) : "") + body + (id ? token(fixed, FIXED_BASE, id) : "");
-        })
-        .join("\n"),
-    restore: (s) =>
-      s
-        .replace(/[\ue000-\uefff]/g, (c) => atomic[c.charCodeAt(0) - ATOMIC_BASE])
-        .replace(/[\uf000-\uf7ff]/g, (c) => fixed[c.charCodeAt(0) - FIXED_BASE]),
-  };
-}
+const protector = markdownProtector;
 
 /** Wraps each changed run, line by line, leaving fixed tokens (prefixes, block ids) outside the spans. */
 function wrap(spans: WordSpan[], cls: string): string {

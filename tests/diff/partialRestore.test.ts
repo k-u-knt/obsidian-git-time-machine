@@ -38,3 +38,28 @@ describe("chunkWithMode", () => {
     expect(applyChunkToText(right, chunkWithMode(chunk, "both"))).toBe(left);
   });
 });
+
+describe("partial restore keeps Markdown intact (review findings)", () => {
+  const chunkOf = (l: string, r: string) => diffText(l, r).chunks[0];
+
+  it("'Remove added' on a pure addition removes the lines instead of leaving a blank one", () => {
+    expect(applyChunkToText("a\nnew line\nb\n", chunkWithMode(chunkOf("a\nb\n", "a\nnew line\nb\n"), "added"))).toBe("a\nb\n");
+    expect(applyChunkToText("- a\n- new\n- b", chunkWithMode(chunkOf("- a\n- b", "- a\n- new\n- b"), "added"))).toBe("- a\n- b");
+  });
+
+  it("never breaks a checkbox or list marker", () => {
+    expect(mergeChange("- [ ] write intro", "- [x] write intro", "added")).toBe("- [x] write intro");
+    expect(mergeChange("- [ ] write intro", "- [x] write intro", "deleted")).toBe("- [x] write intro");
+  });
+
+  it("treats #tags and emphasis as whole words", () => {
+    expect(mergeChange("#todo item", "#done item", "added")).toBe("item");
+    expect(mergeChange("#todo item", "#done item", "deleted")).toBe("#todo #done item");
+    expect(mergeChange("it was **very** good", "it was **quite** good", "added")).toBe("it was good");
+  });
+
+  it("never joins two words when text across a line break changed", () => {
+    expect(mergeChange("para one\npara two", "para one merged two", "added")).toBe("para one two");
+    expect(mergeChange("para one\npara two", "para one merged two", "deleted")).toBe("para one\npara merged two");
+  });
+});
