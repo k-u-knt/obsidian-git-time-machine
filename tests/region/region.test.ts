@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { diffCanvas, type CanvasData } from "../../src/diff/canvasDiff";
 import { canvasAdapter } from "../../src/region/canvasAdapter";
 import { boxInRegion, rectFromPoints } from "../../src/region/geometry";
-import { describePlan, planRestore } from "../../src/region/restorePlan";
+import { ALL_ASPECTS, describePlan, planRestore } from "../../src/region/restorePlan";
 import { expandSelection, itemAt, itemsInRegion } from "../../src/region/selection";
 
 describe("geometry", () => {
@@ -96,6 +96,17 @@ describe("planRestore", () => {
   it("removes cards added since then inside the region only when asked, with their connections", () => {
     expect(planRestore({ ...base, selected: ["b"], currentInRegion: ["b", "new"] }).remove).toEqual([]);
     expect(planRestore({ ...base, selected: ["b"], currentInRegion: ["b", "new"], removeAdded: true }).remove.sort()).toEqual(["b-new", "new"]);
+  });
+
+  it("leaves connections out when Connections is unticked", () => {
+    const plan = planRestore({ ...base, selected: ["a", "far"], aspects: { ...ALL_ASPECTS, connections: false } });
+    expect(plan.add).toEqual(["far"]);
+  });
+
+  it("leaves deleted cards out when 'Bring back deleted cards' is unticked", () => {
+    const plan = planRestore({ ...base, selected: ["a", "b", "gone"], aspects: { ...ALL_ASPECTS, bringBack: false } });
+    expect(plan.add).toEqual([]);
+    expect(plan.replace).toEqual(["b"]);
   });
 
   it("lists deleted files a restored card needs", () => {

@@ -151,7 +151,8 @@
 .gtm-region-summary { margin-right: auto; min-width: 0; }
 .gtm-region-title { font-weight: var(--font-semibold); }
 .gtm-region-warning { color: var(--text-warning); }
-.gtm-region-options { display: flex; flex-direction: column; gap: 2px; }
+.gtm-region-options { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+.gtm-region-label { color: var(--text-muted); font-weight: var(--font-semibold); }
 .gtm-region-option { display: flex; align-items: center; gap: 6px; }
 .gtm-region-option.is-disabled { opacity: 0.5; }
 .gtm-region-actions { display: flex; gap: 8px; }

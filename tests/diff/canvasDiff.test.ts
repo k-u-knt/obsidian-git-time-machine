@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CanvasParseError, countStates, describeCanvasChanges, diffCanvas, nodeTitle, parseCanvas, sameItem, GEOMETRY_FIELDS, type CanvasData } from "../../src/diff/canvasDiff";
+import { CanvasParseError, countStates, describeCanvasChanges, diffCanvas, nodeTitle, parseCanvas, sameForAspects, sameItem, GEOMETRY_FIELDS, type CanvasData } from "../../src/diff/canvasDiff";
 
 const node = (id: string, extra: Record<string, unknown> = {}) => ({ id, type: "text", x: 0, y: 0, width: 200, height: 100, text: id, ...extra });
 const edge = (id: string, fromNode: string, toNode: string, extra: Record<string, unknown> = {}) => ({ id, fromNode, toNode, ...extra });
@@ -106,5 +106,18 @@ describe("sameItem", () => {
   it("can ignore position and size (for 'Keep current positions')", () => {
     expect(sameItem({ id: "a", x: 0, text: "t" }, { id: "a", x: 500, text: "t" }, GEOMETRY_FIELDS)).toBe(true);
     expect(sameItem({ id: "a", x: 0, text: "t" }, { id: "a", x: 500, text: "u" }, GEOMETRY_FIELDS)).toBe(false);
+  });
+});
+
+describe("sameForAspects", () => {
+  const then = { id: "a", type: "text", x: 0, y: 0, width: 100, height: 50, text: "old", color: "1" };
+  const all = { text: true, position: true, size: true, colour: true };
+  it("compares only the aspects being restored", () => {
+    expect(sameForAspects(then, { ...then, x: 40 }, all)).toBe(false);
+    expect(sameForAspects(then, { ...then, x: 40 }, { ...all, position: false })).toBe(true);
+    expect(sameForAspects(then, { ...then, text: "new" }, { ...all, text: false })).toBe(true);
+    expect(sameForAspects(then, { ...then, width: 300 }, { ...all, size: false })).toBe(true);
+    expect(sameForAspects(then, { ...then, color: "4" }, { ...all, colour: false })).toBe(true);
+    expect(sameForAspects(then, { ...then, color: "4", text: "new" }, { ...all, colour: false })).toBe(false);
   });
 });

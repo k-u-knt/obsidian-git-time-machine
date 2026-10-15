@@ -22,6 +22,19 @@ export interface RestorePlan {
   warnings: string[];
 }
 
+/** What a region restore may change. Text covers card content (text, file, link, label). */
+export interface RestoreAspects {
+  text: boolean;
+  position: boolean;
+  size: boolean;
+  colour: boolean;
+  connections: boolean;
+  /** Bring back cards deleted since then. */
+  bringBack: boolean;
+}
+
+export const ALL_ASPECTS: RestoreAspects = { text: true, position: true, size: true, colour: true, connections: true, bringBack: true };
+
 export interface PlanInput {
   past: SpatialAdapter;
   current: SpatialAdapter;
@@ -35,13 +48,22 @@ export interface PlanInput {
   fileExists(path: string): boolean;
   /** For messages. */
   title(id: string): string;
+  /** Defaults to everything. */
+  aspects?: RestoreAspects;
 }
 
 export function planRestore(input: PlanInput): RestorePlan {
   const { past, current } = input;
   const plan: RestorePlan = { replace: [], add: [], remove: [], skip: [], fixups: [], extraFiles: [], warnings: [] };
+  const aspects = input.aspects ?? ALL_ASPECTS;
   const selected = new Set(input.selected);
   const classify = (id: string) => {
+    if (!current.has(id)) {
+      if (aspects.bringBack) plan.add.push(id);
+    } else if (input.unchanged(id)) plan.skip.push(id);
+    else plan.replace.push(id);
+  };
+  const classifyConnector = (id: string) => {
     if (!current.has(id)) plan.add.push(id);
     else if (input.unchanged(id)) plan.skip.push(id);
     else plan.replace.push(id);
@@ -55,11 +77,12 @@ export function planRestore(input: PlanInput): RestorePlan {
     }
   }
 
-  const willExist = (id: string) => selected.has(id) || (current.has(id) && !removed.has(id));
+  const comesBack = (id: string) => current.has(id) || aspects.bringBack;
+  const willExist = (id: string) => (selected.has(id) && comesBack(id)) || (current.has(id) && !removed.has(id));
   const currentConnectors = new Set(current.connectors().map((c) => c.id));
-  for (const c of past.connectors()) {
+  for (const c of aspects.connections ? past.connectors() : []) {
     if (!selected.has(c.from) && !selected.has(c.to)) continue;
-    if (willExist(c.from) && willExist(c.to)) classify(c.id);
+    if (willExist(c.from) && willExist(c.to)) classifyConnector(c.id);
     else if (!currentConnectors.has(c.id)) {
       plan.fixups.push({ id: c.id, reason: `Left out a connection to "${input.title(selected.has(c.from) ? c.to : c.from)}", which no longer exists.` });
     }

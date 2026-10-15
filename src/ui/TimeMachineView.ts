@@ -6,7 +6,7 @@ import type { Version } from "../history/types";
 import type GitTimeMachinePlugin from "../main";
 import type { RepoContext } from "../main";
 import { defaultRegionState } from "../region/RegionTool";
-import type { RestorePlan } from "../region/restorePlan";
+import type { RestoreAspects, RestorePlan } from "../region/restorePlan";
 import { CanvasCompare, type CanvasViewState } from "../render/CanvasCompare";
 import { findCanvasEngine } from "../render/nativeCanvas";
 import { NativeCanvasCompare } from "../render/NativeCanvasCompare";
@@ -657,14 +657,14 @@ export class TimeMachineView extends ItemView {
     previous?.destroy();
   }
 
-  private async restoreCanvasPlan(plan: RestorePlan, keepPositions: boolean): Promise<void> {
+  private async restoreCanvasPlan(plan: RestorePlan, aspects: RestoreAspects): Promise<void> {
     const entry = this.selectedEntry();
     const past = this.canvasDiff?.past;
     if (!entry?.version || !past) return;
     const expected = this.liveText;
     let next: string;
     try {
-      next = formatCanvas(applyCanvasPlan(parseCanvas(expected), past, plan, { keepPositions, offset: this.canvasDiff!.anchor }));
+      next = formatCanvas(applyCanvasPlan(parseCanvas(expected), past, plan, { aspects, offset: this.canvasDiff!.anchor }));
     } catch (e) {
       new Notice(describeError(e));
       return;

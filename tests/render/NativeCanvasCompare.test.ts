@@ -152,6 +152,24 @@ describe("NativeCanvasCompare", () => {
     expect(now.innerHTML).toBe(past.innerHTML);
     cmp.destroy();
   });
+
+  it("lets you choose what to restore; unticking Position leaves a card that only moved alone", async () => {
+    made.length = 0;
+    const restored: unknown[] = [];
+    const { host, cmp } = await drawSimple(restored);
+    click(host, "left", 310, 10);
+    await frame();
+    const title = () => host.querySelector(".gtm-region-title")?.textContent;
+    expect(title()).toBe("Restore 1 item: 1 replaces the current version");
+    const labels = [...host.querySelectorAll(".gtm-region-option")].map((l) => l.textContent);
+    expect(labels).toEqual(["Text", "Position", "Size", "Colour", "Connections", "Bring back deleted cards", "Also remove cards added here since then"]);
+    expect(host.querySelector(".gtm-region-option .is-keep")).toBeNull();
+    const position = [...host.querySelectorAll<HTMLLabelElement>(".gtm-region-option")].find((l) => l.textContent === "Position")!.querySelector("input")!;
+    position.checked = false;
+    position.dispatchEvent(new Event("change"));
+    expect(title()).toBe("Nothing to restore here: the selection is unchanged.");
+    cmp.destroy();
+  });
 });
 
 const dimmed = (e: FakeEngine) => [...e.nodes].filter(([, n]) => n.nodeEl.classList.contains("gtm-n-dim")).map(([id]) => id);
@@ -173,7 +191,7 @@ function click(host: HTMLElement, side: "left" | "right", x: number, y: number) 
   for (const type of ["pointerdown", "pointerup"]) body.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 }));
 }
 
-async function drawSimple() {
+async function drawSimple(restored: unknown[] = []) {
   const past = { nodes: [card("a", 0, "anchor"), card("m", 300, "moved me"), card("e", 900, "Hi-C on twelve samples")], edges: [] };
   const current = {
     nodes: [card("a", 0, "anchor"), { ...card("m", 300, "moved me"), y: 400 }, { ...card("e", 900, "Hi-C and imaging on ten samples"), y: 600 }],
@@ -189,7 +207,7 @@ async function drawSimple() {
     leftLabel: "Today, 10:53",
     state: { zoom: null, scrollLeft: 0, scrollTop: 0, region: defaultRegionState() },
     onUseText: () => {},
-    onRestorePlan: () => {},
+    onRestorePlan: (plan: unknown) => void restored.push(plan),
   });
   await cmp.render(host);
   return { host, cmp };

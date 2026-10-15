@@ -232,3 +232,24 @@ function canonical(v: unknown): unknown {
   }
   return v;
 }
+
+/**
+ * True when a card needs nothing restored for the chosen aspects: position (x, y), size (width, height),
+ * colour, and text (every other field: text, file, link, label…).
+ */
+export function sameForAspects(
+  a: Record<string, unknown> | undefined,
+  b: Record<string, unknown> | undefined,
+  s: { text: boolean; position: boolean; size: boolean; colour: boolean },
+): boolean {
+  if (!a || !b) return false;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  const ignore = [...keys].filter((k) => {
+    if (k === "x" || k === "y") return !s.position;
+    if (k === "width" || k === "height") return !s.size;
+    if (k === "color") return !s.colour;
+    if (k === "id") return false;
+    return !s.text;
+  });
+  return sameItem(a, b, ignore);
+}

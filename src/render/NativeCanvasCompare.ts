@@ -1,10 +1,10 @@
 import { Component, MarkdownRenderer, setIcon, TFile, type App } from "obsidian";
-import { describeCanvasChanges, GEOMETRY_FIELDS, nodeTitle, sameItem, shiftNode, type CanvasDiff, type ItemState } from "../diff/canvasDiff";
+import { describeCanvasChanges, nodeTitle, sameForAspects, sameItem, shiftNode, type CanvasDiff, type ItemState } from "../diff/canvasDiff";
 import { canvasAdapter } from "../region/canvasAdapter";
 import { shiftRegion } from "../region/geometry";
 import { expandSelection, itemAt } from "../region/selection";
 import { RegionTool, type Tool } from "../region/RegionTool";
-import type { RestorePlan } from "../region/restorePlan";
+import type { RestoreAspects, RestorePlan } from "../region/restorePlan";
 import type { CanvasViewState } from "./CanvasCompare";
 import { markInline } from "./markdownBlocks";
 import { createReadonlyCanvas, type NativeCanvas, type NativeCanvasKit } from "./nativeCanvas";
@@ -20,7 +20,7 @@ export interface NativeCanvasCompareOptions {
   leftLabel: string;
   state: CanvasViewState;
   onUseText(nodeId: string): void;
-  onRestorePlan(plan: RestorePlan, keepPositions: boolean): void;
+  onRestorePlan(plan: RestorePlan, aspects: RestoreAspects): void;
 }
 
 interface Side {
@@ -104,7 +104,7 @@ export class NativeCanvasCompare implements CompareRenderer {
       state: state.region,
       bar,
       regionToCurrent: (r) => shiftRegion(r, diff.anchor),
-      unchanged: (id, ignoreGeometry) => sameItem(pastShifted(id), currentItems.get(id), ignoreGeometry ? GEOMETRY_FIELDS : []),
+      unchanged: (id, aspects) => (pastNodes.has(id) ? sameForAspects(pastShifted(id), currentItems.get(id), aspects) : sameItem(pastItems.get(id), currentItems.get(id), ["fromSide", "toSide"])),
       fileExists: (p) => this.o.app.vault.getAbstractFileByPath(p) instanceof TFile,
       title: (id) => {
         const n = pastNodes.get(id);
@@ -114,7 +114,7 @@ export class NativeCanvasCompare implements CompareRenderer {
         this.plan = plan;
         if (!this.fromRight) this.visual = { side: "left", ids: new Set(selected) };
       },
-      onRestore: (plan, keep) => this.o.onRestorePlan(plan, keep),
+      onRestore: (plan, aspects) => this.o.onRestorePlan(plan, aspects),
     });
     this.setTool(state.region.tool);
     // Obsidian's canvas measures its pane on resize; keep it informed as the tab or sidebar changes size.
@@ -268,7 +268,7 @@ export class NativeCanvasCompare implements CompareRenderer {
         if (s.which === "right") node.nodeEl?.toggleClass("gtm-n-doomed", remove.has(id));
       }
     }
-    const keep = this.o.state.region.keepPositions;
+    const keep = !this.o.state.region.aspects.position;
     const key = JSON.stringify([v.side, [...v.ids], keep]);
     if (key === this.marksKey) return;
     this.marksKey = key;

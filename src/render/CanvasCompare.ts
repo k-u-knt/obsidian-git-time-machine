@@ -1,9 +1,9 @@
 import { Component, MarkdownRenderer, setIcon, TFile, type App } from "obsidian";
-import { describeCanvasChanges, GEOMETRY_FIELDS, nodeTitle, sameItem, shiftNode, type CanvasData, type CanvasDiff, type CanvasEdge, type CanvasNode, type ItemState } from "../diff/canvasDiff";
+import { describeCanvasChanges, nodeTitle, sameForAspects, sameItem, shiftNode, type CanvasData, type CanvasDiff, type CanvasEdge, type CanvasNode, type ItemState } from "../diff/canvasDiff";
 import { canvasAdapter } from "../region/canvasAdapter";
 import { RegionTool, type RegionState, type Tool } from "../region/RegionTool";
 import { shiftRegion } from "../region/geometry";
-import type { RestorePlan } from "../region/restorePlan";
+import type { RestoreAspects, RestorePlan } from "../region/restorePlan";
 import { markWords } from "./markdownBlocks";
 import type { CompareRenderer } from "./types";
 
@@ -23,7 +23,7 @@ export interface CanvasCompareOptions {
   leftLabel: string;
   state: CanvasViewState;
   onUseText(nodeId: string): void;
-  onRestorePlan(plan: RestorePlan, keepPositions: boolean): void;
+  onRestorePlan(plan: RestorePlan, aspects: RestoreAspects): void;
 }
 
 const PAD = 80;
@@ -121,7 +121,8 @@ export class CanvasCompare implements CompareRenderer {
       const p = pastNodes.get(id);
       return p ? shiftNode(p, diff.anchor) : pastItems.get(id);
     };
-    const unchanged = (id: string, ignoreGeometry: boolean) => sameItem(pastShifted(id), currentItems.get(id), ignoreGeometry ? GEOMETRY_FIELDS : []);
+    const unchanged = (id: string, aspects: RestoreAspects) =>
+      pastNodes.has(id) ? sameForAspects(pastShifted(id), currentItems.get(id), aspects) : sameItem(pastItems.get(id), currentItems.get(id), ["fromSide", "toSide"]);
     this.tool = new RegionTool({
       past: canvasAdapter(diff.past),
       current: canvasAdapter(diff.current),
@@ -142,7 +143,7 @@ export class CanvasCompare implements CompareRenderer {
         return n ? nodeTitle(n) : id;
       },
       onChange: (selected, plan) => this.highlight(selected, plan),
-      onRestore: (plan, keep) => this.o.onRestorePlan(plan, keep),
+      onRestore: (plan, aspects) => this.o.onRestorePlan(plan, aspects),
     });
   }
 
@@ -395,7 +396,7 @@ export class CanvasCompare implements CompareRenderer {
       const p = past.get(id);
       if (!p) continue;
       const c = current.get(id);
-      const box = this.o.state.region.keepPositions && c ? c : shiftNode(p, this.o.diff.anchor);
+      const box = !this.o.state.region.aspects.position && c ? c : shiftNode(p, this.o.diff.anchor);
       svg.createSvg("rect", { cls: "gtm-ghost", attr: { x: box.x, y: box.y, width: box.width, height: box.height, rx: 8 } });
     }
   }

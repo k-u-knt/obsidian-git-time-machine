@@ -1,5 +1,5 @@
 import type { CanvasData, CanvasNode } from "../diff/canvasDiff";
-import type { RestorePlan } from "../region/restorePlan";
+import { ALL_ASPECTS, type RestoreAspects, type RestorePlan } from "../region/restorePlan";
 
 /** Obsidian's own canvas layout: tab-indented, one node or edge per line, no trailing newline. */
 export function formatCanvas(data: CanvasData): string {
@@ -11,8 +11,8 @@ export function formatCanvas(data: CanvasData): string {
 }
 
 /**
- * Applies a region restore. Replaced cards take their past content and past position, shifted by the anchor
- * `offset` (unless `keepPositions`);
+ * Applies a region restore. Replaced cards take the chosen `aspects` of their past version (position shifted
+ * by the anchor `offset`);
  * added items are inserted after their nearest surviving predecessor in the past order, so layering is kept;
  * removed cards take their connections with them.
  */
@@ -20,8 +20,9 @@ export function applyCanvasPlan(
   current: CanvasData,
   past: CanvasData,
   plan: RestorePlan,
-  opts: { keepPositions: boolean; offset?: { dx: number; dy: number } },
+  opts: { aspects?: RestoreAspects; offset?: { dx: number; dy: number } },
 ): CanvasData {
+  const aspects = opts.aspects ?? ALL_ASPECTS;
   const dx = opts.offset?.dx ?? 0;
   const dy = opts.offset?.dy ?? 0;
   const remove = new Set(plan.remove);
@@ -35,7 +36,7 @@ export function applyCanvasPlan(
     .map((n) => {
       const p = pastNodes.get(n.id);
       if (!replace.has(n.id) || !p) return n;
-      return opts.keepPositions ? { ...p, x: n.x, y: n.y, width: n.width, height: n.height } : { ...p, x: p.x + dx, y: p.y + dy };
+      return restoreAspects(n, p, aspects, dx, dy);
     });
   // Cards that come back land where they were relative to the anchor (the canvas may have shifted since).
   nodes = insertInPastOrder(nodes, past.nodes, add).map((n) => (add.has(n.id) && !current.nodes.some((c) => c.id === n.id) ? { ...n, x: n.x + dx, y: n.y + dy } : n));
@@ -51,7 +52,34 @@ export function applyCanvasPlan(
   return { ...current, nodes, edges };
 }
 
-/** "Use this text": only the card's text goes back; position, size and colour stay as they are now. */
+const GEOMETRY = ["x", "y", "width", "height"];
+
+/**
+ * Today's card with the chosen aspects taken from its past version: text (all content fields), colour,
+ * position (shifted by the anchor's offset) and size. Everything not chosen stays as it is now.
+ */
+function restoreAspects(now: CanvasNode, then: CanvasNode, a: RestoreAspects, dx: number, dy: number): CanvasNode {
+  const out: CanvasNode = { ...now };
+  if (a.text) {
+    for (const k of Object.keys(out)) if (!GEOMETRY.includes(k) && k !== "color" && k !== "id" && !(k in then)) delete out[k];
+    for (const [k, v] of Object.entries(then)) if (!GEOMETRY.includes(k) && k !== "color") out[k] = v;
+  }
+  if (a.colour) {
+    if ("color" in then) out.color = then.color;
+    else delete out.color;
+  }
+  if (a.position) {
+    out.x = then.x + dx;
+    out.y = then.y + dy;
+  }
+  if (a.size) {
+    out.width = then.width;
+    out.height = then.height;
+  }
+  return out;
+}
+
+/** Only the card's text goes back; position, size and colour stay as they are now. */
 export function useCardText(current: CanvasData, pastNode: CanvasNode): CanvasData {
   return { ...current, nodes: current.nodes.map((n) => (n.id === pastNode.id ? { ...n, text: pastNode.text } : n)) };
 }
