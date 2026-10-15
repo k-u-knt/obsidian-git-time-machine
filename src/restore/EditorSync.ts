@@ -10,11 +10,17 @@ export class EditorSync {
   private synced: string;
   private pending: string | null = null;
 
+  /** `validate` returns an error message for text that must not be written yet (e.g. half-typed canvas JSON). */
   constructor(
     readonly target: TextTarget,
     initial: string,
+    private readonly validate: (text: string) => string | null = () => null,
   ) {
     this.synced = initial;
+  }
+
+  hasPending(): boolean {
+    return this.pending !== null;
   }
 
   /** The file text the editor last matched. */
@@ -33,10 +39,12 @@ export class EditorSync {
     this.pending = null;
   }
 
-  async flush(): Promise<"written" | "stale" | "none"> {
+  async flush(): Promise<"written" | "stale" | "none" | "invalid"> {
     const next = this.pending;
     if (next === null) return "none";
+    if (this.validate(next) !== null) return "invalid";
     this.pending = null;
+    await this.target.flush?.();
     const current = await this.target.read();
     if (current !== this.synced) return "stale";
     if (current === next) return "none";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { diffText, applyChunkToText } from "../../src/diff/textDiff";
-import { blockIds, markWords, segmentChunk, segmentRows } from "../../src/render/markdownBlocks";
+import { blockIds, markInline, markWords, segmentChunk, segmentRows } from "../../src/render/markdownBlocks";
 
 describe("blockIds", () => {
   it("separates blocks on blank lines and keeps fences whole", () => {
@@ -75,5 +75,31 @@ describe("markWords", () => {
   it("leaves code fences and tables unmarked", () => {
     expect(markWords("```\na\n```", "```\nb\n```").marked).toBe(false);
     expect(markWords("| a | b |", "| a | c |").marked).toBe(false);
+  });
+});
+
+describe("markInline", () => {
+  it("shows deleted and added words together, in order", () => {
+    expect(markInline("Review results from last week", "Review results and QC metrics")).toBe(
+      'Review results <span class="gtm-word-del">from last week</span><span class="gtm-word-add">and QC metrics</span>',
+    );
+  });
+
+  it("keeps a deleted line as its own line", () => {
+    expect(markInline("a\nold line\nb", "a\nb")).toBe('a\n<span class="gtm-word-del">old line</span>\nb');
+  });
+
+  it("keeps only today's checkbox, so it still renders as one checkbox", () => {
+    expect(markInline("- [ ] Draft methods", "- [x] Draft methods")).toBe("- [x] Draft methods");
+  });
+
+  it("treats links as whole units", () => {
+    expect(markInline("See [[Research map]]", "See [[Research plan]]")).toBe(
+      'See <span class="gtm-word-del">[[Research map]]</span><span class="gtm-word-add">[[Research plan]]</span>',
+    );
+  });
+
+  it("falls back to today's text for code fences and tables", () => {
+    expect(markInline("```\na\n```", "```\nb\n```")).toBe("```\nb\n```");
   });
 });

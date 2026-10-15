@@ -1,7 +1,7 @@
 {
   "id": "git-time-machine",
   "name": "Git Time Machine",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minAppVersion": "1.8.0",
   "description": "Scrub through your vault's Git history, compare versions side by side, and restore changes.",
   "author": "Kenta Ninomiya",

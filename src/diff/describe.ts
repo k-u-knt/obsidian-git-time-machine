@@ -2,7 +2,7 @@ import type { TextDiff } from "./textDiff";
 
 export interface ChangeSummary {
   chunkIndex: number;
-  kind: "edited" | "added" | "removed";
+  kind: "edited" | "added" | "removed" | "moved";
   label: string;
 }
 

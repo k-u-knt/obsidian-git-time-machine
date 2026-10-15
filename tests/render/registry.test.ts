@@ -6,7 +6,7 @@ describe("fileKind", () => {
     expect(fileKind("🔬Notes/Lab sync.md")).toBe("markdown");
     expect(fileKind("Drawing 1.excalidraw.md")).toBe("unsupported");
     expect(fileKind("data/config.JSON")).toBe("text");
-    expect(fileKind("Research map.canvas")).toBe("unsupported");
+    expect(fileKind("Research map.canvas")).toBe("canvas");
     expect(fileKind("img.png")).toBe("unsupported");
     expect(fileKind("folder.v2/README")).toBe("unsupported");
   });

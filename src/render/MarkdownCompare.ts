@@ -1,4 +1,5 @@
 import { Component, MarkdownRenderer, setIcon, type App } from "obsidian";
+import type { RestoreMode } from "../diff/partialRestore";
 import type { Chunk, TextDiff } from "../diff/textDiff";
 import { markWords, segmentChunk, segmentRows, type Segment } from "./markdownBlocks";
 import type { CompareRenderer } from "./types";
@@ -11,7 +12,8 @@ export interface MarkdownCompareOptions {
   diff: TextDiff;
   layout: "split" | "inline";
   leftLabel: string;
-  onRestore(chunk: Chunk): void;
+  /** `mode`: restore both halves, only bring back deleted text, or only remove added text. */
+  onRestore(chunk: Chunk, mode: RestoreMode): void;
 }
 
 /** Rendered mode: each Markdown block rendered natively on both sides, aligned block by block. */
@@ -58,17 +60,19 @@ export class MarkdownCompare implements CompareRenderer {
       const hasRight = seg.rightEnd > seg.rightStart;
       if (layout === "split") {
         await this.cell(row, hasLeft ? marked.left : null, "is-removed");
-        this.restoreButton(row.createDiv({ cls: "gtm-gutter" }), segmentChunk(diff, seg, index), false);
+        this.restoreButtons(row.createDiv({ cls: "gtm-gutter" }), segmentChunk(diff, seg, index), false);
         await this.cell(row, hasRight ? marked.right : null, "is-added");
       } else {
         if (hasLeft) await this.cell(row, marked.left, "is-removed");
         if (hasRight) await this.cell(row, marked.right, "is-added");
-        this.restoreButton(row.createDiv({ cls: "gtm-inline-actions" }), segmentChunk(diff, seg, index), true);
+        this.restoreButtons(row.createDiv({ cls: "gtm-inline-actions" }), segmentChunk(diff, seg, index), true);
       }
     }
   }
 
-  scrollToChunk(chunk: Chunk): void {
+  scrollToChange(index: number): void {
+    const chunk = this.o.diff.chunks[index];
+    if (!chunk) return;
     const rowIndex = this.o.diff.rows.findIndex((r) => r.chunkId === chunk.id);
     const i = this.segments.findIndex((s) => s.rowStart <= rowIndex && rowIndex < s.rowEnd);
     const el = this.segmentEls[i];
@@ -92,10 +96,23 @@ export class MarkdownCompare implements CompareRenderer {
     if (markdown.trim()) await MarkdownRenderer.render(this.o.app, markdown, el, this.o.sourcePath, this.component);
   }
 
-  private restoreButton(parent: HTMLElement, chunk: Chunk, withText: boolean): void {
-    const b = parent.createEl("button", { cls: "gtm-restore", attr: { "aria-label": "Bring this back into your note" } });
-    setIcon(b, "arrow-right");
-    if (withText) b.createSpan({ text: "Restore this" });
-    b.addEventListener("click", () => this.o.onRestore(chunk));
+  /**
+   * The restore choices that apply to a changed block: all three for an edit, "Bring back deleted" for a
+   * deletion, "Remove added" for an addition.
+   */
+  private restoreButtons(parent: HTMLElement, chunk: Chunk, withText: boolean): void {
+    const hasOld = chunk.leftLines.length > 0;
+    const hasNew = chunk.rightLines.length > 0;
+    const choices: Array<[RestoreMode, string, string, string]> = [];
+    if (hasOld && hasNew) choices.push(["both", "arrow-right", "Restore this block", "Restore"]);
+    if (hasOld) choices.push(["deleted", "undo-2", "Bring back the deleted text", "Bring back deleted"]);
+    if (hasNew) choices.push(["added", "eraser", "Remove the added text", "Remove added"]);
+    const group = parent.createDiv({ cls: "gtm-restore-group" });
+    for (const [mode, icon, label, short] of choices) {
+      const b = group.createEl("button", { cls: `gtm-restore is-${mode}`, attr: { "aria-label": label } });
+      setIcon(b, icon);
+      if (withText) b.createSpan({ text: short });
+      b.addEventListener("click", () => this.o.onRestore(chunk, mode));
+    }
   }
 }

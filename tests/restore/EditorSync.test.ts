@@ -55,6 +55,26 @@ describe("EditorSync", () => {
     expect(t.text).toBe("one\n");
   });
 
+  it("holds back text that isn't valid yet and writes once it is", async () => {
+    const t = memTarget("a.canvas", '{"nodes":[]}');
+    const sync = new EditorSync(t, '{"nodes":[]}', (text) => (text.trim().endsWith("}") ? null : "not valid JSON yet"));
+    sync.edited('{"nodes":[');
+    expect(await sync.flush()).toBe("invalid");
+    expect(t.text).toBe('{"nodes":[]}');
+    expect(sync.hasPending()).toBe(true);
+    sync.edited('{"nodes":[{"id":"a"}]}');
+    expect(await sync.flush()).toBe("written");
+    expect(t.text).toBe('{"nodes":[{"id":"a"}]}');
+  });
+
+  it("asks the target to flush before writing", async () => {
+    const t = Object.assign(memTarget("a.md", "x"), { flushes: 0, async flush() { t.flushes++; } });
+    const sync = new EditorSync(t, "x");
+    sync.edited("y");
+    await sync.flush();
+    expect(t.flushes).toBe(1);
+  });
+
   it("keeps a pending edit bound to its own file", async () => {
     const a = memTarget("a.md", "A\n");
     const b = memTarget("b.md", "B\n");

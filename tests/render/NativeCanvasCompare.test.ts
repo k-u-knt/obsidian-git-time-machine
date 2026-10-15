@@ -1,0 +1,272 @@
+// @vitest-environment jsdom
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { installObsidianDom } from "../helpers/obsidianDom";
+
+vi.mock("obsidian", () => ({
+  setIcon: () => {},
+  TFile: class {},
+  Component: class {
+    addChild<T>(c: T) {
+      return c;
+    }
+    removeChild() {}
+    load() {}
+    unload() {}
+  },
+  // Keeps the marked-up HTML so tests can see the word highlights.
+  MarkdownRenderer: {
+    render: async (_app: unknown, md: string, el: HTMLElement) => {
+      el.innerHTML = md;
+    },
+  },
+}));
+const { diffCanvas } = await import("../../src/diff/canvasDiff");
+const { NativeCanvasCompare } = await import("../../src/render/NativeCanvasCompare");
+const { defaultRegionState } = await import("../../src/region/RegionTool");
+
+beforeAll(() => installObsidianDom());
+
+/** Stand-in for Obsidian's canvas engine: records how it is used and draws one element per card. */
+const made: FakeEngine[] = [];
+class FakeEngine {
+  host: { requestSave(): void; saveLocalData?(): void; contentEl: HTMLElement };
+  view = { x: 0, y: 0, zoom: 0 };
+  readonly = false;
+  loaded = false;
+  scale = 0.5;
+  zoomToFitQueued = false;
+  wrapperEl: HTMLElement;
+  nodes = new Map<string, { nodeEl: HTMLElement }>();
+  edges = new Map<string, { lineGroupEl: SVGGElement }>();
+  constructor(host: FakeEngine["host"]) {
+    this.host = host;
+    this.wrapperEl = host.contentEl.createDiv({ cls: "canvas-wrapper" });
+    made.push(this);
+  }
+  load() { this.loaded = true; }
+  unload() { this.loaded = false; }
+  setData(d: { nodes: Array<{ id: string }>; edges: Array<{ id: string }> }) {
+    for (const n of d.nodes) this.nodes.set(n.id, { nodeEl: this.wrapperEl.createDiv({ cls: "canvas-node" }) });
+    for (const e of d.edges) this.edges.set(e.id, { lineGroupEl: document.createElementNS("http://www.w3.org/2000/svg", "g") as SVGGElement });
+  }
+  setReadonly(r: boolean) { this.readonly = r; }
+  onResize() {}
+  zoomToFit() { this.view = { x: 50, y: 50, zoom: -1 }; }
+  zoomToBbox() {}
+  getState() { return { ...this.view }; }
+  setState(v: FakeEngine["view"]) { this.view = { ...v }; }
+  getViewportBBox() { return { minX: 0, minY: 0, maxX: 100, maxY: 100 }; }
+  posFromEvt(ev: MouseEvent) { return { x: ev.clientX, y: ev.clientY }; }
+  requestFrame() {}
+}
+
+const card = (id: string, x: number, text: string) => ({ id, type: "text", x, y: 0, width: 200, height: 100, text });
+
+describe("NativeCanvasCompare", () => {
+  it("shows both versions in read-only canvases whose saving does nothing, with changed cards marked", async () => {
+    made.length = 0;
+    const past = { nodes: [card("a", 0, "old"), card("b", 300, "same"), card("gone", 600, "bye")], edges: [] };
+    const current = { nodes: [card("a", 0, "new"), card("b", 300, "same"), card("c", 900, "hello")], edges: [] };
+    const host = document.body.createDiv();
+    const cmp = new NativeCanvasCompare({
+      app: { vault: { getAbstractFileByPath: () => null } } as never,
+      kit: { Engine: FakeEngine as never, plugin: {} },
+      file: { path: "map.canvas" } as never,
+      parent: { addChild: (c: unknown) => c, removeChild: () => {} } as never,
+      diff: diffCanvas(past, current),
+      leftLabel: "Today, 10:53",
+      state: { zoom: null, scrollLeft: 0, scrollTop: 0, region: defaultRegionState() },
+      onCompareText: () => {},
+      onRestorePlan: () => {},
+    });
+    await cmp.render(host);
+    expect(made).toHaveLength(2);
+    expect(made.every((e) => e.readonly && e.loaded)).toBe(true);
+    expect(made[0].host.requestSave()).toBeUndefined();
+    const leftTags = [...made[0].wrapperEl.querySelectorAll(".gtm-n-tag")].map((t) => t.textContent);
+    const rightTags = [...made[1].wrapperEl.querySelectorAll(".gtm-n-tag")].map((t) => t.textContent);
+    expect(leftTags).toEqual(["Edited", "Removed"]);
+    expect(rightTags).toEqual(["Edited", "Added"]);
+    expect([...made[0].wrapperEl.querySelectorAll(".gtm-n-action")].map((b) => b.textContent)).toEqual(["Compare text…", "Restore card…"]);
+    expect([...made[1].wrapperEl.querySelectorAll(".gtm-n-action")].map((b) => b.textContent)).toEqual(["Compare text…"]);
+    cmp.destroy();
+    expect(made.every((e) => !e.loaded)).toBe(true);
+  });
+
+  it("keeps each side's drawings inside that side and scaled exactly like its canvas", async () => {
+    made.length = 0;
+    const { host } = await drawSimple();
+    for (const o of host.querySelectorAll(".gtm-native-overlay")) expect(o.getAttribute("preserveAspectRatio")).toBe("none");
+    expect(host.querySelectorAll(".gtm-canvas-pane.is-left .gtm-marks, .gtm-canvas-pane.is-left .gtm-region")).toHaveLength(2);
+    expect(host.querySelectorAll(".gtm-canvas-pane.is-right .gtm-marks")).toHaveLength(1);
+  });
+
+  it("shows Moved/Resized tags only on the past side", async () => {
+    made.length = 0;
+    const { cmp } = await drawSimple();
+    expect([...made[0].wrapperEl.querySelectorAll(".gtm-n-tag")].map((t) => t.textContent)).toEqual(["Moved", "Edited"]);
+    expect([...made[1].wrapperEl.querySelectorAll(".gtm-n-tag")].map((t) => t.textContent)).toEqual(["Edited"]);
+    cmp.destroy();
+  });
+
+  it("picking on the past side dims the rest there; the current side shows a red ghost where it was and a red→green arrow to now", async () => {
+    made.length = 0;
+    const { host, cmp } = await drawSimple();
+    click(host, "left", 310, 10);
+    await frame();
+    expect(dimmed(made[0])).toEqual(["a", "e"]);
+    expect(dimmed(made[1])).toEqual([]);
+    const ghost = host.querySelector(".gtm-canvas-pane.is-right .gtm-marks .gtm-ghost")!;
+    expect(ghost.classList.contains("gtm-ghost-past")).toBe(true);
+    expect([ghost.getAttribute("x"), ghost.getAttribute("y")]).toEqual(["300", "0"]);
+    expectPastToNowArrow(host, "right");
+    expect(host.querySelectorAll(".gtm-native-links")).toHaveLength(0);
+    cmp.destroy();
+  });
+
+  it("picking on the current side dims the rest there; the past side shows a green ghost where it is now and a red→green arrow to it", async () => {
+    made.length = 0;
+    const { host, cmp } = await drawSimple();
+    click(host, "right", 310, 410);
+    await frame();
+    expect(dimmed(made[1])).toEqual(["a", "e"]);
+    expect(dimmed(made[0])).toEqual([]);
+    const ghost = host.querySelector(".gtm-canvas-pane.is-left .gtm-marks .gtm-ghost")!;
+    expect(ghost.classList.contains("gtm-ghost-now")).toBe(true);
+    expect([ghost.getAttribute("x"), ghost.getAttribute("y")]).toEqual(["300", "400"]);
+    expectPastToNowArrow(host, "left");
+    expect(host.querySelector(".gtm-region-title")?.textContent).toContain("1 replaces");
+    cmp.destroy();
+  });
+
+  it("shows deleted and added words together in both ghosts", async () => {
+    made.length = 0;
+    const { host, cmp } = await drawSimple();
+    const words = (el: Element, cls: string) => [...el.querySelectorAll(cls)].map((w) => w.textContent);
+    click(host, "left", 910, 10);
+    await frame();
+    const past = host.querySelector(".gtm-canvas-pane.is-right .gtm-marks .gtm-ghost-content")!;
+    expect(words(past, ".gtm-word-del")).toEqual(["twelve"]);
+    expect(words(past, ".gtm-word-add")).toEqual(["and imaging", "ten"]);
+    click(host, "right", 910, 610);
+    await frame();
+    const now = host.querySelector(".gtm-canvas-pane.is-left .gtm-marks .gtm-ghost-content")!;
+    expect(now.innerHTML).toBe(past.innerHTML);
+    cmp.destroy();
+  });
+
+  it("lets you choose what to restore; unticking Position leaves a card that only moved alone", async () => {
+    made.length = 0;
+    const restored: unknown[] = [];
+    const { host, cmp } = await drawSimple(restored);
+    click(host, "left", 310, 10);
+    await frame();
+    const title = () => host.querySelector(".gtm-region-title")?.textContent;
+    expect(title()).toBe("Restore 1 item: 1 replaces the current version");
+    const labels = [...host.querySelectorAll(".gtm-region-option")].map((l) => l.textContent);
+    expect(labels).toEqual(["Text", "Position", "Size", "Colour", "Connections", "Bring back deleted cards", "Also remove cards added here since then"]);
+    expect(host.querySelector(".gtm-region-option .is-keep")).toBeNull();
+    const position = [...host.querySelectorAll<HTMLLabelElement>(".gtm-region-option")].find((l) => l.textContent === "Position")!.querySelector("input")!;
+    position.checked = false;
+    position.dispatchEvent(new Event("change"));
+    expect(title()).toBe("Nothing to restore here: the selection is unchanged.");
+    cmp.destroy();
+  });
+});
+
+describe("NativeCanvasCompare keeps the vault safe and the view steady", () => {
+  it("lets nothing be dropped onto, duplicated in or unlocked in the read-only canvases", async () => {
+    made.length = 0;
+    const { cmp } = await drawSimple();
+    for (const e of made) {
+      expect(e.host.saveLocalData?.()).toBeUndefined();
+      const reached: string[] = [];
+      for (const t of ["dragover", "drop", "pointerdown"]) e.wrapperEl.addEventListener(t, () => reached.push(t));
+      e.wrapperEl.dispatchEvent(new Event("dragover", { bubbles: true, cancelable: true }));
+      e.wrapperEl.dispatchEvent(new Event("drop", { bubbles: true, cancelable: true }));
+      e.wrapperEl.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, altKey: true }));
+      e.wrapperEl.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, metaKey: true }));
+      expect(reached).toEqual([]);
+      e.wrapperEl.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+      expect(reached).toEqual(["pointerdown"]);
+      e.readonly = false; // e.g. the canvas's own lock button
+    }
+    await frame();
+    expect(made.every((e) => e.readonly)).toBe(true);
+    cmp.destroy();
+  });
+
+  it("links pan and zoom through the anchor shift, both ways", async () => {
+    made.length = 0;
+    const past = { nodes: [card("a", 0, "one"), card("b", 300, "two")], edges: [] };
+    const current = { nodes: [card("a", 100, "one"), card("b", 400, "two")], edges: [] };
+    const { cmp } = await drawSimple([], { past, current });
+    made[0].setState({ x: 10, y: 20, zoom: -1 });
+    await frame();
+    expect(made[1].getState()).toEqual({ x: 110, y: 20, zoom: -1 });
+    made[1].setState({ x: 500, y: 40, zoom: 0.5 });
+    await frame();
+    expect(made[0].getState()).toEqual({ x: 400, y: 40, zoom: 0.5 });
+    cmp.destroy();
+  });
+
+  it("never touches the fallback's zoom, and a rebuild keeps the view and a current-side pick", async () => {
+    made.length = 0;
+    const state = { zoom: null, scrollLeft: 0, scrollTop: 0, region: defaultRegionState() };
+    const first = await drawSimple([], { state });
+    made[0].setState({ x: 7, y: 8, zoom: -2 });
+    click(first.host, "right", 310, 410);
+    await frame();
+    first.cmp.destroy();
+    expect(state.zoom).toBeNull();
+    const second = await drawSimple([], { state });
+    await frame();
+    expect(made[2].getState()).toEqual({ x: 7, y: 8, zoom: -2 });
+    expect(made[3].getState()).toEqual({ x: 7, y: 8, zoom: -2 });
+    expect(made[2].zoomToFitQueued || made[3].zoomToFitQueued).toBe(false);
+    expect(dimmed(made[3])).toEqual(["a", "e"]);
+    expect(dimmed(made[2])).toEqual([]);
+    second.cmp.destroy();
+  });
+});
+
+const dimmed = (e: FakeEngine) => [...e.nodes].filter(([, n]) => n.nodeEl.classList.contains("gtm-n-dim")).map(([id]) => id);
+
+/** Card m moved from y=0 to y=400: the arrow runs from its past centre to its current centre, red fading to green. */
+function expectPastToNowArrow(host: HTMLElement, side: "left" | "right") {
+  const arrow = host.querySelector(`.gtm-canvas-pane.is-${side} .gtm-marks .gtm-goback`)!;
+  expect(arrow.getAttribute("d")).toBe("M400,50 L400,450");
+  const gradientId = /url\(#(.+)\)/.exec(arrow.getAttribute("stroke") ?? "")?.[1];
+  const stops = [...host.querySelectorAll(`#${gradientId} stop`)].map((st) => st.getAttribute("class"));
+  expect(stops).toEqual(["gtm-stop-past", "gtm-stop-now"]);
+}
+
+const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
+
+/** A plain click at scene point (x, y) on one side (the fake engine maps clientX/Y straight to the scene). */
+function click(host: HTMLElement, side: "left" | "right", x: number, y: number) {
+  const body = host.querySelector(`.gtm-canvas-pane.is-${side} .gtm-native-body`)!;
+  for (const type of ["pointerdown", "pointerup"]) body.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 }));
+}
+
+async function drawSimple(restored: unknown[] = [], o: { past?: unknown; current?: unknown; state?: unknown } = {}) {
+  const simplePast = { nodes: [card("a", 0, "anchor"), card("m", 300, "moved me"), card("e", 900, "Hi-C on twelve samples")], edges: [] };
+  const simpleCurrent = {
+    nodes: [card("a", 0, "anchor"), { ...card("m", 300, "moved me"), y: 400 }, { ...card("e", 900, "Hi-C and imaging on ten samples"), y: 600 }],
+    edges: [],
+  };
+  const host = document.body.createDiv();
+  const cmp = new NativeCanvasCompare({
+    app: { vault: { getAbstractFileByPath: () => null } } as never,
+    kit: { Engine: FakeEngine as never, plugin: {} },
+    file: { path: "map.canvas" } as never,
+    parent: { addChild: (c: unknown) => c, removeChild: () => {} } as never,
+    diff: diffCanvas((o.past ?? simplePast) as never, (o.current ?? simpleCurrent) as never),
+    leftLabel: "Today, 10:53",
+    state: (o.state ?? { zoom: null, scrollLeft: 0, scrollTop: 0, region: defaultRegionState() }) as never,
+    onCompareText: () => {},
+    onRestorePlan: (plan: unknown) => void restored.push(plan),
+  });
+  await cmp.render(host);
+  return { host, cmp };
+}

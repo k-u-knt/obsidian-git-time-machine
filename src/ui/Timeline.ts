@@ -30,7 +30,7 @@ export class Timeline {
     el.empty();
     const head = el.createDiv({ cls: "gtm-rail-head" });
     head.createDiv({ cls: "gtm-rail-title", text: "Timeline" });
-    head.createDiv({ cls: "gtm-rail-sub", text: "Only versions that changed this note" });
+    head.createDiv({ cls: "gtm-rail-sub", text: "Only versions that changed this file" });
     this.renderScrubber(el.createDiv({ cls: "gtm-scrubber" }), p);
 
     if (p.changes.length) {
@@ -38,7 +38,7 @@ export class Timeline {
       const list = el.createDiv({ cls: "gtm-change-list" });
       for (const c of p.changes) {
         const b = list.createEl("button", { cls: `gtm-change is-${c.kind}` });
-        b.createSpan({ cls: "gtm-change-sign", text: c.kind === "added" ? "+" : c.kind === "removed" ? "−" : "~" });
+        b.createSpan({ cls: "gtm-change-sign", text: c.kind === "added" ? "+" : c.kind === "removed" ? "−" : c.kind === "moved" ? "↔" : "~" });
         b.createSpan({ text: c.label });
         b.addEventListener("click", () => this.cb.onJump(c.chunkIndex));
       }
