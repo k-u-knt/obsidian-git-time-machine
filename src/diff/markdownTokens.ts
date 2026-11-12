@@ -5,9 +5,11 @@
  *   #tags, and **bold** / __bold__ / ~~strike~~ / ==highlight== runs;
  * - FIXED (never wrapped or removed): a line's prefix (quote, heading, list marker, checkbox, callout) and a
  *   trailing block id.
+ * Inner character classes exclude their own opening delimiter ("<", "[", "("): otherwise a long line of "<" or
+ * "[" in an old note makes every start position scan to the end of the line (quadratic), freezing the diff view.
  */
 export const ATOMIC =
-  /!?\[\[[^\]\n]*\]\]|!?\[[^\]\n]*\]\([^)\n]*\)|\[\^[^\]\n]*\]|`[^`\n]+`|\$[^$\n]+\$|<[^>\n]+>|(?<![\w#])#[A-Za-z][\w/-]*|\*\*[^*\n]+\*\*|__[^_\n]+__|~~[^~\n]+~~|==[^=\n]+==/g;
+  /!?\[\[[^[\]\n]*\]\]|!?\[[^[\]\n]*\]\([^()\n]*\)|\[\^[^[\]\n]*\]|`[^`\n]+`|\$[^$\n]+\$|<[^<>\n]+>|(?<![\w#])#[A-Za-z][\w/-]*|\*\*[^*\n]+\*\*|__[^_\n]+__|~~[^~\n]+~~|==[^=\n]+==/g;
 export const LINE_PREFIX = /^(?:[ \t]*(?:>[ \t]?|#{1,6}[ \t]+|[-*+][ \t]+(?:\[.\][ \t]+)?|\d+[.)][ \t]+(?:\[.\][ \t]+)?|\[![^\]\n]*\][+-]?[ \t]*))+/;
 export const BLOCK_ID = /[ \t]\^[A-Za-z0-9-]+[ \t]*$/;
 export const ATOMIC_BASE = 0xe000;

@@ -1,7 +1,11 @@
 import { GitError, type GitRunner } from "../git/GitRunner";
 import { LruCache } from "./LruCache";
-import { parseFileLog } from "./parseFileLog";
+import { COMMIT_HASH, parseFileLog } from "./parseFileLog";
 import type { Version } from "./types";
+
+function assertCommitHash(hash: string): void {
+  if (!COMMIT_HASH.test(hash)) throw new Error(`Invalid commit id: ${JSON.stringify(hash.slice(0, 80))}`);
+}
 
 const NO_COMMITS = /does not have any commits|unknown revision|bad revision|bad default revision|ambiguous argument/i;
 
@@ -16,6 +20,7 @@ export class HistoryService {
    * using its pre-rename path. (`--skip` cannot be used: it breaks `--follow` across renames.)
    */
   async fileHistory(repoPath: string, opts: { limit: number; before?: Version }): Promise<Version[]> {
+    if (opts.before) assertCommitHash(opts.before.hash);
     const start = opts.before ? [`${opts.before.hash}^`] : [];
     const pathspec = opts.before ? (opts.before.fromPath ?? opts.before.path) : repoPath;
     try {
@@ -30,6 +35,8 @@ export class HistoryService {
         "--numstat",
         "-z",
         `-n${opts.limit}`,
+        // Nothing after this is read as an option, even if it starts with "-".
+        "--end-of-options",
         ...start,
         "--",
         pathspec,
@@ -43,10 +50,11 @@ export class HistoryService {
 
   /** File bytes at a commit. `repoPath` must be the path at that commit (Version.path). Cached: commits never change. */
   async readAt(hash: string, repoPath: string): Promise<Buffer> {
+    assertCommitHash(hash);
     const key = `${hash}:${repoPath}`;
     const hit = this.contents.get(key);
     if (hit) return hit;
-    const buf = await this.git.buffer(["show", `${hash}:${repoPath}`]);
+    const buf = await this.git.buffer(["show", "--end-of-options", `${hash}:${repoPath}`]);
     this.contents.set(key, buf);
     return buf;
   }
