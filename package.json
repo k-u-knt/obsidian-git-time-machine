@@ -1,6 +1,6 @@
 {
   "name": "obsidian-git-time-machine",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Scrub through your vault's Git history (as committed by Obsidian Git), compare notes and canvases side by side, rendered the way Obsidian renders them, and restore whole versions, single blocks or selected canvas cards.",
   "private": true,
   "type": "module",
