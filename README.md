@@ -65,6 +65,9 @@ Your vault (or a folder above it) must be a Git repository with some history, fo
 - **It edits your files only when you restore**, through Obsidian (so an open editor and its undo history stay
   in sync). If the file changed since the comparison was drawn, the restore is refused and the comparison
   refreshed.
+- **It reads outside the vault** only where the Git repository is: the repository can be a folder above the
+  vault, and the plugin runs the `git` program from your system (see **Git program** above). Files outside
+  the vault are never written.
 - It sends nothing over the network.
 - The canvas view uses **Obsidian's internal canvas engine**, which is not public API (checked with Obsidian
   1.14). Both canvases are read-only and cannot save; if the engine can't be reached, the plugin draws the
@@ -82,12 +85,13 @@ Your vault (or a folder above it) must be a Git repository with some history, fo
 npm install
 npm run dev            # watch build into main.js (set GTM_TEST_VAULT to copy each build into a test vault)
 npm test               # unit tests (vitest)
+npm run lint           # Obsidian's ESLint rules (eslint-plugin-obsidianmd)
 npm run build          # type-check + production build
 npm run install-vault  # build and copy into a vault: pass its folder, set OBSIDIAN_VAULT, or use .vault-path
 ```
 
 Releases: `npm version patch` (tags without a "v", via `.npmrc`), `git push --follow-tags`, and GitHub Actions
-builds a draft release from the tag.
+lints, tests and builds a draft release from the tag.
 
 ## License
 
