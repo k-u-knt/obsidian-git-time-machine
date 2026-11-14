@@ -17,7 +17,7 @@ export const FIXED_BASE = 0xf000;
 /** Matches one FIXED placeholder character. */
 export const FIXED = /[\uf000-\uf7ff]/g;
 
-export function markdownProtector(): { protect(s: string): string; restore(s: string): string } {
+export function markdownProtector(): { protect: (s: string) => string; restore: (s: string) => string } {
   const atomic: string[] = [];
   const fixed: string[] = [];
   const token = (list: string[], base: number, m: string) => {

@@ -16,7 +16,8 @@ vi.mock("obsidian", () => ({
   // Keeps the marked-up HTML so tests can see the word highlights.
   MarkdownRenderer: {
     render: async (_app: unknown, md: string, el: HTMLElement) => {
-      el.innerHTML = md;
+      // Tests pass trusted HTML strings in place of rendered markdown.
+      el.replaceChildren(...Array.from(new DOMParser().parseFromString(md, "text/html").body.childNodes));
     },
   },
 }));
@@ -47,7 +48,7 @@ class FakeEngine {
   unload() { this.loaded = false; }
   setData(d: { nodes: Array<{ id: string }>; edges: Array<{ id: string }> }) {
     for (const n of d.nodes) this.nodes.set(n.id, { nodeEl: this.wrapperEl.createDiv({ cls: "canvas-node" }) });
-    for (const e of d.edges) this.edges.set(e.id, { lineGroupEl: document.createElementNS("http://www.w3.org/2000/svg", "g") as SVGGElement });
+    for (const e of d.edges) this.edges.set(e.id, { lineGroupEl: document.createElementNS("http://www.w3.org/2000/svg", "g") });
   }
   setReadonly(r: boolean) { this.readonly = r; }
   onResize() {}

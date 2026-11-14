@@ -14,6 +14,6 @@ describe("textTargetFor", () => {
 
   it("uses the editor-aware text target for notes", () => {
     const t = textTargetFor(app, { path: "a.md" } as never);
-    expect(t.same).toBeUndefined();
+    expect(typeof t.same).toBe("undefined");
   });
 });

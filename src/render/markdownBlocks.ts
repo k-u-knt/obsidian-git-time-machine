@@ -7,7 +7,7 @@ import { wordSpans, type Chunk, type Row, type TextDiff, type WordSpan } from ".
  * Fenced code (``` / ~~~), $$ math and front matter are single blocks even across blank lines.
  */
 export function blockIds(lines: string[]): number[] {
-  const ids: number[] = new Array(lines.length);
+  const ids = new Array<number>(lines.length);
   let id = 0;
   let inBlock = false;
   let fence: string | null = null;

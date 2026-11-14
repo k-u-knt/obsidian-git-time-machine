@@ -30,8 +30,8 @@ export interface RegionToolOptions {
   bar: HTMLElement;
   /** True when the item needs nothing restored, for the chosen aspects. */
   unchanged(id: string, aspects: RestoreAspects): boolean;
-  fileExists(path: string): boolean;
-  title(id: string): string;
+  fileExists: (path: string) => boolean;
+  title: (id: string) => string;
   /** Called whenever the selection or plan changes, so the sides can highlight items and draw ghosts. */
   onChange(selected: string[], plan: RestorePlan | null): void;
   onRestore(plan: RestorePlan, aspects: RestoreAspects): void;

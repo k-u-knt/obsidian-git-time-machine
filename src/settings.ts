@@ -1,4 +1,4 @@
-import { Notice, PluginSettingTab, Setting, type App } from "obsidian";
+import { Notice, PluginSettingTab, Setting, requireApiVersion, type App } from "obsidian";
 import type GitTimeMachinePlugin from "./main";
 import { describeLocateError } from "./ui/messages";
 
@@ -64,16 +64,16 @@ export class GtmSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Versions loaded at a time")
-      .addSlider((sl) =>
-        sl
-          .setLimits(20, 200, 10)
+      .addSlider((sl) => {
+        sl.setLimits(20, 200, 10)
           .setValue(s.versionsPerPage)
-          .setDynamicTooltip()
           .onChange(async (v) => {
             s.versionsPerPage = v;
             await this.plugin.saveSettings();
-          }),
-      );
+          });
+        // From Obsidian 1.13 the value is shown next to the slider; before that only this tooltip shows it.
+        if (!requireApiVersion("1.13.0")) (sl as unknown as { setDynamicTooltip(): void }).setDynamicTooltip();
+      });
 
     new Setting(containerEl)
       .setName("Check connection")

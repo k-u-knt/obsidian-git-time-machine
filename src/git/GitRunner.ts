@@ -23,7 +23,7 @@ export class GitError extends Error {
 const BASE_ARGS = ["-c", "core.quotepath=off", "--literal-pathspecs", "--no-optional-locks"];
 const MAX_BUFFER = 256 * 1024 * 1024;
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
 
 export class GitRunner {
   constructor(

@@ -1,4 +1,11 @@
-import { Modal, Setting, type App } from "obsidian";
+import { Modal, Setting, requireApiVersion, type App, type ButtonComponent } from "obsidian";
+
+/** Mark a button as destructive: setDestructive() from Obsidian 1.13, the older setWarning() before that. */
+function markDestructive(b: ButtonComponent): ButtonComponent {
+  if (requireApiVersion("1.13.0")) return b.setDestructive();
+  (b as unknown as { setWarning(): void }).setWarning();
+  return b;
+}
 
 export interface ConfirmOptions {
   title: string;
@@ -18,9 +25,7 @@ export function confirmModal(app: App, opts: ConfirmOptions): Promise<boolean> {
     new Setting(modal.contentEl)
       .addButton((b) => b.setButtonText("Cancel").onClick(() => modal.close()))
       .addButton((b) =>
-        b
-          .setButtonText(opts.confirmText)
-          .setWarning()
+        markDestructive(b.setButtonText(opts.confirmText))
           .onClick(() => {
             confirmed = true;
             modal.close();

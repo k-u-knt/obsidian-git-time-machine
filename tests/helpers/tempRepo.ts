@@ -9,7 +9,7 @@ export interface TempRepo {
   write(rel: string, content: string): Promise<void>;
   /** Commits everything with a fixed timestamp (seconds since epoch) and returns the hash. */
   commit(message: string, epochSeconds: number): string;
-  cleanup(): Promise<void>;
+  cleanup: () => Promise<void>;
 }
 
 export async function makeTempDir(prefix = "gtm-"): Promise<string> {

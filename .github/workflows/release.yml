@@ -19,6 +19,7 @@ jobs:
       - name: Check tag matches manifest version
         run: test "$GITHUB_REF_NAME" = "$(jq -r .version manifest.json)" || { echo "tag $GITHUB_REF_NAME != manifest version"; exit 1; }
       - run: npm ci
+      - run: npm run lint
       - run: npm test
       - run: npm run build
       - name: Create release

@@ -2,6 +2,7 @@ import type { Version } from "./types";
 
 /** A full SHA-1 (40) or SHA-256 (64) commit id. Anything else is never passed to git as a revision. */
 export const COMMIT_HASH = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+// eslint-disable-next-line no-control-regex -- \x1e and \x1f are the record and field separators of our git log --format
 const HEADER = /^\n?\x1e([0-9a-f]{40}(?:[0-9a-f]{24})?)\x1f(\d+)$/;
 const NUMSTAT = /^\n?(-|\d+)\t(-|\d+)\t([\s\S]*)$/;
 

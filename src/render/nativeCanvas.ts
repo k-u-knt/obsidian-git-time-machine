@@ -38,7 +38,7 @@ const REQUIRED = ["load", "unload", "setData", "setReadonly", "onResize", "zoomT
 
 function kitFrom(view: unknown): NativeCanvasKit | null {
   const v = view as { canvas?: object; plugin?: unknown } | null;
-  const proto = v?.canvas ? Object.getPrototypeOf(v.canvas) : null;
+  const proto = v?.canvas ? (Object.getPrototypeOf(v.canvas) as Record<string, unknown>) : null;
   if (!proto || !v?.plugin || !REQUIRED.every((m) => typeof proto[m] === "function")) return null;
   return { Engine: v.canvas!.constructor as CanvasEngine, plugin: v.plugin };
 }

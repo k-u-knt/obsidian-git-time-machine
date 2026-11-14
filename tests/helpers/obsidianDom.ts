@@ -27,10 +27,10 @@ export function installObsidianDom(): void {
       cb?.(el);
       return el;
     },
-    createDiv(this: Node & { createEl: Function }, o?: Info, cb?: (el: Element) => void) {
+    createDiv(this: Node & { createEl: (tag: string, o?: Info, cb?: (el: Element) => void) => Element }, o?: Info, cb?: (el: Element) => void) {
       return this.createEl("div", o, cb);
     },
-    createSpan(this: Node & { createEl: Function }, o?: Info, cb?: (el: Element) => void) {
+    createSpan(this: Node & { createEl: (tag: string, o?: Info, cb?: (el: Element) => void) => Element }, o?: Info, cb?: (el: Element) => void) {
       return this.createEl("span", o, cb);
     },
     createSvg(this: Node, tag: string, o?: Info, cb?: (el: Element) => void) {
@@ -68,7 +68,7 @@ export function installObsidianDom(): void {
     },
   });
   // Obsidian's global createDiv: a detached element.
-  (globalThis as unknown as { createDiv: Function }).createDiv = (o?: Info) => apply(document.createElement("div"), o);
+  (globalThis as unknown as { createDiv: (o?: Info) => Element }).createDiv = (o?: Info) => apply(document.createElement("div"), o);
   if (!Element.prototype.scrollTo) Element.prototype.scrollTo = function () {};
   if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = function () {};
 }

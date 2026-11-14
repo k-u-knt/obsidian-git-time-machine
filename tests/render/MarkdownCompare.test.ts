@@ -11,7 +11,8 @@ vi.mock("obsidian", () => ({
   },
   MarkdownRenderer: {
     render: async (_a: unknown, md: string, el: HTMLElement) => {
-      el.innerHTML = md;
+      // Tests pass trusted HTML strings in place of rendered markdown.
+      el.replaceChildren(...Array.from(new DOMParser().parseFromString(md, "text/html").body.childNodes));
     },
   },
   setIcon: () => {},
